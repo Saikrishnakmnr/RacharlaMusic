@@ -1,43 +1,64 @@
 import streamlit as st
 import time
 
-st.set_page_config(page_title="తెలుగు మెలోడీ సాంగ్ జనరేటర్", page_icon="🎵")
+# 1. App Setup
+st.set_page_config(page_title="తెలుగు సాంగ్స్ జనరేటర్", page_icon="🎵")
 st.title("🎵 తెలుగు AI మెలోడీ సాంగ్ జనరేటర్")
-st.write("మీకు నచ్చిన 4 లైన్ల లిరిక్స్ ఇవ్వండి మరియు మధురమైన పాటను వినండి!")
+st.write("మీ 4 లైన్ల లిరిక్స్ ఇవ్వండి మరియు పాటను వినండి!")
 
-# Real dynamic melody tracks
-MELODY_TRACKS = [
-    "https://soundhelix.com",
-    "https://soundhelix.com"
-]
+# High-quality audio sample streams
+MELODY_TRACKS = {
+    "Male Vocal (మెలోడీ)": "https://soundhelix.com",
+    "Female Vocal (మెలోడీ)": "https://soundhelix.com"
+}
 
-with st.form(key="melody_form"):
+# 2. CRITICAL FIX: Initialize Session State variables if they don't exist
+if "song_generated" not in st.session_state:
+    st.session_state.song_generated = False
+if "saved_lyrics" not in st.session_state:
+    st.session_state.saved_lyrics = ""
+if "saved_track" not in st.session_state:
+    st.session_state.saved_track = ""
+
+# 3. User Input Form
+with st.form(key="music_generation_form"):
     user_lyrics = st.text_area(
         label="మీ 4 లైన్ల లిరిక్స్ ఇక్కడ రాయండి (Enter your 4-line lyrics):",
-        value="చిరు నవ్వులొలికే ఓ చిన్నారి గణపతి |\nమా గుండెల్లో కొలువై ఉండాలయ్యా ||\nవేడుకతో నీకు పూజలు చేస్తాము |\nతోడుగా మమ్మల్ని కాపాడవయ్యా ||",
-        height=150
+        value="చిరు నవ్వులొలికే ఓ చిన్నારી గణపతి |\nమా గుండెల్లో కొలువై ఉండాలయ్యా ||\nవేడుకతో నీకు పూజలు చేస్తాము |\nతోడుగా మమ్మల్ని కాపాడవయ్యా ||",
+        height=130
     )
     
-    singer_type = st.selectbox("గాయకుడు/గాయని (Select Singer Type):", ["Male Vocal (మెలోడీ)", "Female Vocal (మెలోడీ)"])
+    singer_type = st.selectbox("గాయకుడు/గాయని (Select Voice Style):", list(MELODY_TRACKS.keys()))
     
-    generate_btn = st.form_submit_button(label="మెలోడీ పాటను సృష్టించు (Generate Melody Song)")
+    submit_btn = st.form_submit_button(label="మెలోడీ పాటను సృష్టించు (Generate Song)")
 
-if generate_btn:
-    if len(user_lyrics.strip().split('\n')) < 2:
-        st.warning("⚠️ దయచేసి కనీసం 2 నుండి 4 లైన్ల లిరిక్స్ రాయండి!")
+# 4. Action Block: Save data only when the Form Button is pressed
+if submit_btn:
+    if not user_lyrics.strip():
+        st.warning("⚠️ దయచేసి లిరిక్స్ టైప్ చేయండి!")
     else:
-        with st.spinner("AI సంగీత దర్శకుడు మధురమైన రాగాన్ని కంపోజ్ చేస్తున్నాడు..."):
-            time.sleep(2) # Simulates AI compiling time
+        with st.spinner("AI మధురమైన రాగాన్ని కంపోజ్ చేస్తున్నాడు..."):
+            time.sleep(1.5) # Simulates backend compilation delay
             
-            st.success("🎉 అద్భుతమైన మెలోడీ పాట సిద్ధంగా ఉంది!")
-            st.info(f"📝 **మీ పాట సాహిత్యం:**\n\n{user_lyrics}")
-            st.divider()
-            
-            # Select track based on dropdown selection
-            selected_track = MELODY_TRACKS[0] if "Male" in singer_type else MELODY_TRACKS[1]
-            
-            st.write("🎧 **పాటను ఇక్కడ వినండి (Listen to Melody):**")
-            st.audio(selected_track, format="audio/mp3")
-            
-            # Free downloading link
-            st.markdown(f'<a href="{selected_track}" download="telugu_melody_song.mp3" style="display: inline-block; padding: 10px 20px; color: white; background-color: #25D366; text-decoration: none; border-radius: 5px;">📥 పాటను డౌన్లోడ్ చేసుకోండి (Download MP3)</a>', unsafe_allow_html=True)
+            # Lock everything into the app memory (Session State)
+            st.session_state.song_generated = True
+            st.session_state.saved_lyrics = user_lyrics
+            st.session_state.saved_track = MELODY_TRACKS[singer_type]
+
+st.divider()
+
+# 5. PERMANENT DISPLAY BLOCK: Runs independently of form button state
+if st.session_state.song_generated:
+    st.success("🎉 అద్భుతమైన మెలోడీ పాట సిద్ధంగా ఉంది!")
+    
+    # Show lyrics inside a stable block
+    st.info(f"📝 **మీ పాట సాహిత్యం:**\n\n{st.session_state.saved_lyrics}")
+    
+    # Audio component remains completely stable when clicked
+    st.write("🎧 **పాటను ఇక్కడ వినండి (Listen to Melody):**")
+    st.audio(st.session_state.saved_track, format="audio/mp3")
+    
+    # Clean reset option to clear screen layout safely
+    if st.button("🔄 కొత్త పాటను సృష్టించు (Create New Song)"):
+        st.session_state.song_generated = False
+        st.rerun()

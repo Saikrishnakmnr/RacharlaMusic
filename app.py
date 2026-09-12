@@ -8,7 +8,7 @@ st.set_page_config(page_title="జెమిని ఆడియో జనరే�
 st.title("🎵 జెమిని మల్టీమోడల్ ఆడియో జనరేటర్")
 st.write("మీ జెమిని కీ ఉపయోగించి డైరెక్ట్ ఆడియోను సృష్టించండి!")
 
-# 2. Get the Gemini Key from Secrets or Sidebar
+# 2. Get the Gemini Key from Secrets or Sidebar Drawer
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
@@ -25,11 +25,11 @@ if "saved_lyrics" not in st.session_state:
 # 3. User Text Input Layout
 user_lyrics = st.text_area(
     label="మీ 4 లైన్ల లిరిక్స్ ఇక్కడ రాయండి (Telugu Lyrics):",
-    value="చిరు నవ్వులొలికే ఓ చిన్నари గణపతి |\nమా గుండెల్లో కొలువై ఉండాలయ్యా ||",
+    value="చిరు నవ్వులొలికే ఓ చిన్నారి గణపతి |\nమా గుండెల్లో కొలువై ఉండాలయ్యా ||",
     height=120
 )
 
-# 4. Trigger Execution
+# 4. Trigger Execution Action
 if st.button("ఆడియోను సృష్టించు (Generate Audio)"):
     if not api_key:
         st.error("🔑 దయచేసి సైడ్‌బార్‌లో మీ గూగుల్ జెమిని కీని ఎంటర్ చేయండి!")
@@ -44,9 +44,9 @@ if st.button("ఆడియోను సృష్టించు (Generate Audio)
                 # Combine input into an explicit audio request prompt
                 prompt_text = f"Sing or read these Telugu lyrics dramatically with clear expression: {user_lyrics}"
                 
-                # FIX: Updated to 'gemini-3.6-flash' as required by the API
+                # Targets the active API model requesting direct audio modality configuration
                 response = client.models.generate_content(
-                    model='gemini-3.6-flash',
+                    model='gemini-2.5-flash',
                     contents=prompt_text,
                     config=types.GenerateContentConfig(
                         response_modalities=["AUDIO"],
@@ -60,12 +60,13 @@ if st.button("ఆడియోను సృష్టించు (Generate Audio)
                     )
                 )
                 
-                # Extract the raw binary audio bytes safely from the multi-part payload response channel
+                # CRITICAL FIX: Extract the raw binary audio bytes safely from the first list candidate item [0]
                 audio_bytes = None
-                for part in response.candidates.content.parts:
-                    if part.inline_data:
-                        audio_bytes = part.inline_data.data
-                        break
+                if response.candidates and len(response.candidates) > 0:
+                    for part in response.candidates[0].content.parts:
+                        if part.inline_data:
+                            audio_bytes = part.inline_data.data
+                            break
                 
                 if audio_bytes:
                     st.session_state.audio_ready = True

@@ -1,37 +1,40 @@
-import streamlit as str
+import streamlit as st
 import random
 
-# App title and configuration
-str.set_page_config(page_title="తెలుగు లిరిక్స్ జనరేటర్", page_icon="🎵")
-str.title("🎵 తెలుగు సాంగ్ లిరిక్స్ జనరేటర్")
-str.write("మీకు నచ్చిన శైలిని ఎంచుకుని క్షణాల్లో తెలుగు పాటను సృష్టించండి!")
+# App setup
+st.set_page_config(page_title="తెలుగు సాంగ్స్ జనరేటర్", page_icon="🎵")
+st.title("🎵 తెలుగు సాంగ్స్ జనరేటర్")
+st.write("మీకు కావలసిన శైలిని ఎంచుకోండి, లిరిక్స్ మరియు పాటను వినండి!")
 
-# Pure Telugu Lyrics Database (No Sanskrit)
-lyrics_db = {
-    "భక్తి పాటలు (Devotional)": [
-        "వినాయకా విఘ్నరాజా వేగమే రావయ్యా |\nమమ్మేలుకొని నీ దీవెనలు ఇయ్యవయ్యా ||",
-        "కొండలెక్కి కొలిచేటి కోనేటి రాయుడా |\nకనులార నిన్ను చూసి కరిగిపోవాలి మా గుండె ||",
-        "అమ్మలగన్న అమ్మ ముగ్గురమ్మల మూలపుటమ్మ |\nమమ్మేలి కాపాడే మంగళ గౌరమ్మ ||"
-    ],
-    "ప్రేమ పాటలు (Romantic)": [
-        "నువ్వు నాతో ఉంటే చాలు గుండెల్లో ఏదో అలజడి |\nనీ నీడగా సాగడమే నా ప్రాణానికి ఊపిరి ||",
-        "మనసున ఉన్న మాట చెప్పలేక ఆగిపోయా |\nనీ నవ్వు చూసి మళ్ళీ నిన్నే ప్రేమిస్తూ ఉండిపోయా ||",
-        "వాన చినుకులు నీ పైన పడుతుంటే |\nనా కళ్ళు నీ వైపే చూస్తూ ఆగిపోయాయే ||"
-    ],
-    "ఉత్సాహ భరిత పాటలు (Mass/Energetic)": [
-        "దరువే బద్దలయ్యేలా అడుగులేయరా తమ్ముడా |\nమన దెబ్బకి లోకమంతా అదిరిపోవాలిరా ||",
-        "ఈ రోజు మనదేరా ఎదురే లేదురా |\nగుండెల్లో ధైర్యముంటే తిరుగే లేదురా ||"
-    ]
+# Pure Telugu Songs Database (Lyrics + Royalty-free Audio sample links)
+# Note: Replace URL links with your own audio files or hosted Telugu mp3 tracks.
+songs_db = {
+    "భక్తి పాటలు (Devotional)": {
+        "lyrics": "వినాయకా విఘ్నరాజా వేగమే రావయ్యా |\nమమ్మేలుకొని నీ దీవెనలు ఇయ్యవయ్యా ||",
+        "audio_url": "https://soundhelix.com"  
+    },
+    "ప్రేమ పాటలు (Romantic)": {
+        "lyrics": "నువ్వు నాతో ఉంటే చాలు గుండెల్లో ఏదో అలజడి |\nనీ నీడగా సాగడమే నా ప్రాణానికి ఊపిరి ||",
+        "audio_url": "https://soundhelix.com"
+    },
+    "ఉత్సాహ భరిత పాటలు (Mass/Energetic)": {
+        "lyrics": "దరుве బద్దలయ్యేలా అడుగులేయరా తమ్ముడా |\nమన దెబ్బకి లోకమంతా అదిరిపోవాలిరా ||",
+        "audio_url": "https://soundhelix.com"
+    }
 }
 
-# User Selection
-genre = str.selectbox("పాట శైలిని ఎంచుకోండి (Select Genre):", list(lyrics_db.keys()))
+# User Interface
+genre = st.selectbox("పాట శైలిని ఎంచుకోండి (Select Genre):", list(songs_db.keys()))
 
-# Generation Button
-if str.button("పాటను సృష్టించు (Generate Song)"):
-    lines = lyrics_db[genre]
-    selected_song = random.choice(lines)
+if st.button("పాటను ప్లే చేయి (Generate & Play Song)"):
+    selected_track = songs_db[genre]
     
-    str.success("✨ మీ కోసం సృష్టించిన తెలుగు లైన్లు:")
-    str.subheader(selected_song)
-  
+    # 1. Show Telugu Lyrics
+    st.success("✨ మీ కోసం సిద్ధంగా ఉన్న లిరిక్స్:")
+    st.subheader(selected_track["lyrics"])
+    
+    st.divider()
+    
+    # 2. Show Audio Music Player
+    st.write("🎧 **పాటను ఇక్కడ వినండి (Listen to Song):**")
+    st.audio(selected_track["audio_url"], format="audio/mp3")

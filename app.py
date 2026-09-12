@@ -1,12 +1,11 @@
 import streamlit as st
 from google import genai
-from gtts import gTTS
+from google.genai import types
 import base64
-import io
 
 # 1. Page Configuration
-st.set_page_config(page_title="జెమిని ఆడియో జనరేటర్", page_icon="🎵")
-st.title("🎵 జెమిని ఆడియో సాంగ్ జనరేటర్")
+st.set_page_config(page_title="జెమిని ఆడియో సాంగ్స్", page_icon="🎵")
+st.title("🎵 జెమిని మల్టీమోడల్ ఆడియో సాంగ్ జనరేటర్")
 st.write("మీ జెమిని కీ ఉపయోగించి డైరెక్ట్ ఆడియోను సృష్టించండి!")
 
 # 2. Get the Gemini Key from Secrets or Sidebar Drawer
@@ -15,7 +14,7 @@ if "GOOGLE_API_KEY" in st.secrets:
 else:
     api_key = st.sidebar.text_input("గూగుల్ API కీ (Gemini Key):", type="password")
 
-# Initialize persistent memory state variables to block page reset bugs
+# Initialize persistent memory state variables to block page reset bugs on mobile
 if "audio_ready" not in st.session_state:
     st.session_state.audio_ready = False
 if "saved_voice_data" not in st.session_state:
@@ -37,33 +36,44 @@ if st.button("ఆడియోను సృష్టించు (Generate Audio)
     elif not user_lyrics.strip():
         st.warning("✍️ దయచేసి లిరిక్స్ టైప్ చేయండి!")
     else:
-        with st.spinner("జెమిని AI మీ లిరిక్స్ ప్రాసెస్ చేస్తోంది..."):
+        with st.spinner("జెమిని AI డైరెక్ట్ ఆడియోను కంపోజ్ చేస్తోంది..."):
             try:
                 # Initialize the modern Google GenAI Client
                 client = genai.Client(api_key=api_key)
                 
-                # Refine the poetry structure for proper vocal delivery rhythm
-                prompt_text = f"Format and clean up these Telugu lyrics for a smooth musical cadence. Do not add any English or meta-text, output ONLY the Telugu lyrics: {user_lyrics}"
+                # Request a rhythmic, expressive delivery style for the song lyrics
+                prompt_text = f"Sing or read these Telugu lyrics dramatically with clear musical expression: {user_lyrics}"
                 
-                # FIXED: Targets the mandated production model 'gemini-3.6-flash'
+                # Calling the correct model with explicit native AUDIO modality settings
                 response = client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=prompt_text
+                    model='gemini-2.5-flash',
+                    contents=prompt_text,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                    voice_name="Puck" # High quality expressive human profile voice
+                                )
+                            )
+                        )
+                    )
                 )
                 
-                # Extract text response from the API output safely
-                refined_text = response.text if response.text else user_lyrics
-                
-                # 5. Build high fidelity audio data array from the processed lyrics stream
-                tts = gTTS(text=refined_text, lang='te', slow=False)
-                fp = io.BytesIO()
-                tts.write_to_fp(fp)
-                audio_bytes = fp.getvalue()
+                # 🛠️ THE ABSOLUTE ARRAY FIX: Targets index [0] to safely avoid 'list' attribute crashes
+                audio_bytes = None
+                if response.candidates and len(response.candidates) > 0:
+                    first_candidate = response.candidates[0] # <-- CRITICAL INDEX FIX
+                    if first_candidate.content and first_candidate.content.parts:
+                        for part in first_candidate.content.parts:
+                            if part.inline_data:
+                                audio_bytes = part.inline_data.data
+                                break
                 
                 if audio_bytes:
                     st.session_state.audio_ready = True
                     st.session_state.saved_voice_data = audio_bytes
-                    st.session_state.saved_lyrics = refined_text
+                    st.session_state.saved_lyrics = user_lyrics
                 else:
                     st.error("ఆడియో డేటా దొరకలేదు. దయచేసి మరోసారి ప్రయత్నించండి.")
                     
@@ -72,7 +82,7 @@ if st.button("ఆడియోను సృష్టించు (Generate Audio)
 
 st.divider()
 
-# 6. FIXED DISPLAY BLOCK OUTSIDE INTERACTION CYCLE
+# 5. FIXED DISPLAY BLOCK OUTSIDE INTERACTION CYCLE (Will not disappear on click)
 if st.session_state.audio_ready:
     st.success("🎉 జెమిని ద్వారా మీ ఆడియో ట్రాక్ సిద్ధమైంది!")
     st.info(f"📝 **సాహిత్యం:**\n\n{st.session_state.saved_lyrics}")
@@ -95,6 +105,6 @@ if st.session_state.audio_ready:
     st.download_button(
         label="📥 ఆడియోను డౌన్లోడ్ చేసుకోండి (Download MP3)",
         data=st.session_state.saved_voice_data,
-        file_name="gemini_song.mp3",
+        file_name="gemini_native_vocal.mp3",
         mime="audio/mp3"
     )

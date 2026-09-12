@@ -1,7 +1,7 @@
-
 import streamlit as st
 from google import genai
 from google.genai import types
+import base64
 
 # 1. Page Configuration
 st.set_page_config(page_title="జెమిని ఆడియో జనరేటర్", page_icon="🎵")
@@ -25,7 +25,7 @@ if "saved_lyrics" not in st.session_state:
 # 3. User Text Input Layout
 user_lyrics = st.text_area(
     label="మీ 4 లైన్ల లిరిక్స్ ఇక్కడ రాయండి (Telugu Lyrics):",
-    value="చిరు నవ్వులొలికే ఓ చిన్నારી గణపతి |\nమా గుండెల్లో కొలువై ఉండాలయ్యా ||",
+    value="చిరు నవ్వులొలికే ఓ చిన్నари గణపతి |\nమా గుండెల్లో కొలువై ఉండాలయ్యా ||",
     height=120
 )
 
@@ -44,9 +44,9 @@ if st.button("ఆడియోను సృష్టించు (Generate Audio)
                 # Combine input into an explicit audio request prompt
                 prompt_text = f"Sing or read these Telugu lyrics dramatically with clear expression: {user_lyrics}"
                 
-                # Call the advanced flash model requesting direct audio modality response configuration
+                # FIX: Updated to 'gemini-3.6-flash' as required by the API
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.6-flash',
                     contents=prompt_text,
                     config=types.GenerateContentConfig(
                         response_modalities=["AUDIO"],
@@ -62,7 +62,7 @@ if st.button("ఆడియోను సృష్టించు (Generate Audio)
                 
                 # Extract the raw binary audio bytes safely from the multi-part payload response channel
                 audio_bytes = None
-                for part in response.candidates[0].content.parts:
+                for part in response.candidates.content.parts:
                     if part.inline_data:
                         audio_bytes = part.inline_data.data
                         break
@@ -87,7 +87,6 @@ if st.session_state.audio_ready:
     st.write("🎧 **పాటను ఇక్కడ వినండి (Listen below without any disabling issue):**")
     
     # Safe HTML5 wrapper rendering to prevent mobile page refreshing bugs completely
-    import base64
     b64_audio = base64.b64encode(st.session_state.saved_voice_data).decode()
     
     audio_html = f"""

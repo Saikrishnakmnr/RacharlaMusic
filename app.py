@@ -38,3 +38,4 @@ if st.button("పాటను ప్లే చేయి (Generate & Play Song)")
     # 2. Show Audio Music Player
     st.write("🎧 **పాటను ఇక్కడ వినండి (Listen to Song):**")
     st.audio(selected_track["audio_url"], format="audio/mp3")
+    

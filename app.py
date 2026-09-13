@@ -1,9 +1,8 @@
 import os
-import io
-import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 import streamlit as st
-from gtts import gTTS
 from google import genai
 
 APP_NAME = "RacharlaMusic"
@@ -31,7 +30,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# UI Poster Banner Restoration
+# Restore UI Poster Banner
 if POSTER.exists():
     st.markdown('<div class="hero">', unsafe_allow_html=True)
     st.image(str(POSTER), use_container_width=True)
@@ -44,14 +43,13 @@ st.markdown(
 )
 
 STYLES = {
-    "Telugu Romantic": "Melodic Telugu song, emotional lead vocal, acoustic guitar, soft melody",
+    "Telugu Romantic": "Melodic Telugu song, emotional vocal, acoustic guitar melody",
     "Telugu Mass": "High energy Telugu commercial track, fast vocal rhythm, energetic folk drums",
     "Telugu Folk": "Traditional Telugu folk rhythm, authentic vocal style, dholak",
     "English Pop": "Modern English pop track, upbeat vocal performance, catchy beat",
-    "Cinematic": "Epic soundtrack with vocal chants and dramatic build",
 }
 
-# Sidebar Settings
+# Sidebar Configuration
 with st.sidebar:
     st.markdown("## 🔑 API Configuration")
     api_key = st.text_input("Gemini API Key", type="password", value=os.environ.get("GEMINI_API_KEY", ""))
@@ -61,7 +59,7 @@ with st.sidebar:
     style_choice = st.selectbox("🎼 Song Style", list(STYLES), index=0)
     duration = st.selectbox("⏱️ Target Duration", [30, 60], index=0)
 
-# Main Form Setup
+# Main Form Layout
 c1, c2 = st.columns([1.3, 0.7], gap="large")
 
 with c1:
@@ -98,7 +96,7 @@ with c2:
         
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Execution Logic
+# Core Execution Logic
 if generate_btn:
     if not api_key.strip():
         st.error("Please enter your Gemini API Key in the sidebar.")
@@ -112,37 +110,45 @@ if generate_btn:
     status.info(f"Generating script & {duration}-second audio track via Gemini API...")
 
     try:
-        # 1. Connect to Gemini API using google-genai
+        # 1. Connect Gemini Client
         client = genai.Client(api_key=api_key.strip())
-        
-        # 2. Generate structured lyrics script
         prompt_content = f"""
-        Act as a professional music composer. Generate a complete song script based on:
+        Act as a music producer. Generate a song script based on:
         Title: {track_title}
         Style: {style_choice} ({STYLES[style_choice]})
         Length Target: {duration} seconds
-        Input Lyrics/Idea: {lyrics_input}
+        Lyrics/Idea: {lyrics_input}
 
-        Include clear sections like [Intro], [Verse], [Chorus], and [Outro].
+        Format with [Intro], [Verse], [Chorus], and [Outro].
         """
         
-        script_res = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_content
-        )
+        # Try latest standard Flash model endpoints
+        try:
+            script_res = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_content
+            )
+        except Exception:
+            script_res = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt_content
+            )
+            
         formatted_script = script_res.text if script_res and script_res.text else lyrics_input
 
-        # 3. Process vocal output audio
+        # 2. Fetch Audio stream via native HTTP request (No extra package installation required)
         lang_code = 'te' if any('\u0c00' <= char <= '\u0c7f' for char in lyrics_input) else 'en'
         vocal_text = lyrics_input[:160] if duration == 30 else lyrics_input[:320]
         
-        tts = gTTS(text=vocal_text, lang=lang_code, slow=False)
-        audio_fp = io.BytesIO()
-        tts.write_to_fp(audio_fp)
-        audio_fp.seek(0)
+        encoded_text = urllib.parse.quote(vocal_text)
+        tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl={lang_code}&client=tw-ob"
+        
+        req = urllib.request.Request(tts_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            audio_bytes = response.read()
 
-        # 4. Save results to Session State
-        st.session_state["audio_bytes"] = audio_fp.read()
+        # 3. Store Data in Session State
+        st.session_state["audio_bytes"] = audio_bytes
         st.session_state["script"] = formatted_script
         st.session_state["track_title"] = track_title.strip() or "Racharla Track"
         

@@ -1,7 +1,7 @@
-import hashlib
-
 from .base import BaseMusicProvider, GenerationResult
 from audio.wav import synthesize_song
+
+import hashlib
 
 
 class LocalFallbackProvider(BaseMusicProvider):
@@ -22,7 +22,7 @@ class LocalFallbackProvider(BaseMusicProvider):
 
         try:
 
-            if not lyrics or not lyrics.strip():
+            if not lyrics.strip():
                 return GenerationResult(
                     ok=False,
                     message="Lyrics are empty.",
@@ -34,8 +34,7 @@ class LocalFallbackProvider(BaseMusicProvider):
                 float(duration_sec),
             )
 
-            # Make the seed strongly dependent on the actual song.
-            song_text = (
+            song_data = (
                 f"{title}|"
                 f"{lyrics}|"
                 f"{style_prompt}|"
@@ -46,7 +45,7 @@ class LocalFallbackProvider(BaseMusicProvider):
             )
 
             digest = hashlib.sha256(
-                song_text.encode("utf-8")
+                song_data.encode("utf-8")
             ).hexdigest()
 
             final_seed = int(
@@ -68,8 +67,8 @@ class LocalFallbackProvider(BaseMusicProvider):
                 mime="audio/wav",
                 extension="wav",
                 message=(
-                    f"Generated {int(duration_sec)} seconds "
-                    "of music locally."
+                    f"Generated {int(duration_sec)} "
+                    "seconds of music."
                 ),
                 provider=self.name,
             )
@@ -78,6 +77,6 @@ class LocalFallbackProvider(BaseMusicProvider):
 
             return GenerationResult(
                 ok=False,
-                message=f"Music generation failed: {exc}",
+                message=f"Generation failed: {exc}",
                 provider=self.name,
             )

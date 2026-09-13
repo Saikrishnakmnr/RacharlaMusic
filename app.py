@@ -124,8 +124,14 @@ def spec_params(spec):
     return []
 
 def make_value(p, lyrics, caption, language, duration, audio_format):
-    name=str(p.get("parameter_name",p.get("name",p.get("label","")))).lower()
+    name=str(p.get("parameter_name") or p.get("name") or p.get("label") or p.get("component_label") or "").lower()
     default=p.get("default",None)
+    # Gradio exposes dropdown/radio choices in different schema shapes.
+    choices=p.get("choices") or p.get("enum") or p.get("options")
+    if isinstance(choices, dict):
+        choices=list(choices.keys())
+    if not isinstance(choices, (list, tuple)):
+        choices=[]
     if default is not None:
         # Replace duration/language/text defaults below when relevant.
         pass
@@ -143,7 +149,13 @@ def make_value(p, lyrics, caption, language, duration, audio_format):
     if "bpm" in name: return None
     if "key_scale" in name or "keyscale" in name: return ""
     if "time_signature" in name or "timesignature" in name: return ""
-    if "model" in name and "path" not in name: return "acestep-v15-turbo"
+    if "model" in name and "path" not in name:
+        preferred="acestep-v15-turbo"
+        if preferred in choices:
+            return preferred
+        if choices:
+            return choices[0]
+        return preferred
     if "task_type" in name: return "text2music"
     if "use_format" in name or "format" in name and "audio" not in name: return True
     if "lm_temperature" in name: return 0.85
@@ -163,7 +175,15 @@ def make_value(p, lyrics, caption, language, duration, audio_format):
     if "repainting_end" in name: return -1.0
     if "track_name" in name: return None
     if "complete_track" in name: return []
-    if default is not None: return default
+    if default is not None:
+        # Never send an invalid value to a Gradio choice component.
+        if choices and default not in choices:
+            return choices[0]
+        return default
+    # If this is a choice component whose schema did not match a named field,
+    # use its first valid choice rather than sending an empty string.
+    if choices:
+        return choices[0]
     # conservative fallbacks
     typ=p.get("type",{})
     if isinstance(typ,dict):

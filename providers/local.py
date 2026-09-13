@@ -1,23 +1,83 @@
+import hashlib
+
 from .base import BaseMusicProvider, GenerationResult
 from audio.wav import synthesize_song
 
-class LocalFallbackProvider(BaseMusicProvider):
-    """Reliable CPU-only fallback. No API key, external GPU, or network call."""
-    name = "RacharlaMusic Independent Local Synthesizer"
 
-    def generate(self, lyrics: str, style_prompt: str, seed: int,
-                 duration_sec: float = 60.0, vocal: str = "Natural lead",
-                 title: str = "RacharlaMusic Song", language: str = "Telugu") -> GenerationResult:
+class LocalFallbackProvider(BaseMusicProvider):
+
+    name = "RacharlaMusic Local Music Engine"
+
+    def generate(
+        self,
+        lyrics: str,
+        style_prompt: str,
+        seed: int,
+        duration_sec: float = 30.0,
+        vocal: str = "Natural lead",
+        title: str = "RacharlaMusic Song",
+        language: str = "Telugu",
+        direction: str = "",
+    ) -> GenerationResult:
+
         try:
-            audio = synthesize_song(
-                lyrics=lyrics or title,
-                style=style_prompt,
-                seed=seed,
-                duration_sec=float(duration_sec),
-                vocal=vocal,
+
+            if not lyrics or not lyrics.strip():
+                return GenerationResult(
+                    ok=False,
+                    message="Lyrics are empty.",
+                    provider=self.name,
+                )
+
+            duration_sec = max(
+                1.0,
+                float(duration_sec),
             )
-            return GenerationResult(True, audio, "audio/wav", "wav",
-                                    f"Generated {duration_sec:.0f}s locally on CPU.", self.name)
+
+            # Make the seed strongly dependent on the actual song.
+            song_text = (
+                f"{title}|"
+                f"{lyrics}|"
+                f"{style_prompt}|"
+                f"{vocal}|"
+                f"{language}|"
+                f"{direction}|"
+                f"{seed}"
+            )
+
+            digest = hashlib.sha256(
+                song_text.encode("utf-8")
+            ).hexdigest()
+
+            final_seed = int(
+                digest[:16],
+                16,
+            )
+
+            audio = synthesize_song(
+                lyrics=lyrics,
+                style=style_prompt,
+                vocal=vocal,
+                duration_seconds=duration_sec,
+                seed=final_seed,
+            )
+
+            return GenerationResult(
+                ok=True,
+                audio_bytes=audio,
+                mime="audio/wav",
+                extension="wav",
+                message=(
+                    f"Generated {int(duration_sec)} seconds "
+                    "of music locally."
+                ),
+                provider=self.name,
+            )
+
         except Exception as exc:
-            return GenerationResult(False, None, "audio/wav", "wav",
-                                    f"Local generation failed: {exc}", self.name)
+
+            return GenerationResult(
+                ok=False,
+                message=f"Music generation failed: {exc}",
+                provider=self.name,
+            )

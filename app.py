@@ -89,164 +89,282 @@ def safe_view_api(client):
     except Exception as e:
         raise RuntimeError(f"Could not read the music service API: {e}")
 
+
+def _textify(obj):
+    """Turn an API schema object into searchable text."""
+    try:
+        return str(obj).lower()
+    except Exception:
+        return ""
+
+def _param_list(spec):
+    if not isinstance(spec, dict):
+        return []
+    for key in ("parameters", "inputs"):
+        val = spec.get(key)
+        if isinstance(val, list):
+            return val
+    return []
+
+def _return_list(spec):
+    if not isinstance(spec, dict):
+        return []
+    for key in ("returns", "outputs"):
+        val = spec.get(key)
+        if isinstance(val, list):
+            return val
+    return []
+
 def endpoint_candidates(info):
-    out=[]
-    if isinstance(info,dict):
-        named=info.get("named_endpoints",{})
-        if isinstance(named,dict):
-            for name,spec in named.items():
-                text=(str(name)+" "+str(spec)).lower()
-                if any(x in text for x in ("generate","music","audio")):
-                    out.append((name,spec))
-        unnamed=info.get("unnamed_endpoints",{})
-        if isinstance(unnamed,dict):
-            for name,spec in unnamed.items():
-                out.append((name,spec))
-    return out
+    """Return only plausible *generation* endpoints.
+
+    The ACE-Step Space exposes many Gradio events (load/init/config changes).
+    Picking the first endpoint containing 'generate' is unsafe because those
+    events can return UI update dictionaries rather than audio.
+    """
+    eps = []
+    if not isinstance(info, dict):
+        return eps
+
+    for container_key in ("named_endpoints", "unnamed_endpoints"):
+        container = info.get(container_key, {})
+        if not isinstance(container, dict):
+            continue
+        for name, spec in container.items():
+            params = _param_list(spec)
+            returns = _return_list(spec)
+            ptxt = _textify(params)
+            rtxt = _textify(returns)
+            ntxt = _textify(name)
+            alltxt = f"{ntxt} {ptxt} {rtxt}"
+
+            # A real music generation event should accept lyrics/caption and
+            # normally duration/audio-related parameters.
+            has_text = ("lyrics" in ptxt or "lyric" in ptxt)
+            has_prompt = any(x in ptxt for x in ("caption", "prompt", "description", "sample_query"))
+            has_duration = "duration" in ptxt
+            has_audio_output = any(
+                x in rtxt for x in ("audio", "filepath", "filedata", "audio_url")
+            )
+            bad_event = any(
+                x in alltxt for x in (
+                    "initialize", "initialise", "load_model", "load model",
+                    "change_model", "change model", "checkpoint", "refresh"
+                )
+            )
+
+            score = 0
+            if has_text: score += 40
+            if has_prompt: score += 25
+            if has_duration: score += 15
+            if has_audio_output: score += 40
+            if "generate" in ntxt: score += 20
+            if "music" in ntxt: score += 10
+            if "audio" in ntxt: score += 5
+            if bad_event: score -= 60
+
+            if has_text or has_prompt or has_audio_output:
+                eps.append((score, name, spec))
+
+    eps.sort(key=lambda x: x[0], reverse=True)
+    return eps
 
 def choose_endpoint(info):
-    eps=endpoint_candidates(info)
+    eps = endpoint_candidates(info)
     if not eps:
-        raise RuntimeError("The hosted music Space did not expose a callable generation endpoint.")
-    # Prefer an endpoint that explicitly looks like generation/music.
-    for name,spec in eps:
-        n=str(name).lower()
-        if "generate" in n and "music" in n: return name,spec
-    for name,spec in eps:
-        if "generate" in str(name).lower(): return name,spec
-    return eps[0]
+        raise RuntimeError(
+            "Could not find the ACE-Step music generation endpoint. "
+            "The Hugging Face Space API may have changed."
+        )
+
+    # Prefer an endpoint that both consumes lyrics/prompt and returns audio.
+    for score, name, spec in eps:
+        ptxt = _textify(_param_list(spec))
+        rtxt = _textify(_return_list(spec))
+        if ("lyric" in ptxt or "caption" in ptxt or "prompt" in ptxt) and \
+           any(x in rtxt for x in ("audio", "filepath", "filedata")):
+            return name, spec
+
+    return eps[0][1], eps[0][2]
 
 def spec_params(spec):
-    if not isinstance(spec,dict): return []
-    for key in ("parameters","inputs"):
-        val=spec.get(key)
-        if isinstance(val,list): return val
+    return _param_list(spec)
+
+def _choice_values(p):
+    choices = p.get("choices") or p.get("enum") or p.get("options")
+    if isinstance(choices, dict):
+        choices = list(choices.keys())
+    if isinstance(choices, (list, tuple)):
+        # Gradio sometimes returns [["value","label"], ...]
+        out = []
+        for c in choices:
+            if isinstance(c, (list, tuple)) and c:
+                out.append(c[0])
+            else:
+                out.append(c)
+        return out
     return []
 
 def make_value(p, lyrics, caption, language, duration, audio_format):
-    name=str(p.get("parameter_name") or p.get("name") or p.get("label") or p.get("component_label") or "").lower()
-    default=p.get("default",None)
-    # Gradio exposes dropdown/radio choices in different schema shapes.
-    choices=p.get("choices") or p.get("enum") or p.get("options")
-    if isinstance(choices, dict):
-        choices=list(choices.keys())
-    if not isinstance(choices, (list, tuple)):
-        choices=[]
-    if default is not None:
-        # Replace duration/language/text defaults below when relevant.
-        pass
-    if any(x in name for x in ("lyric","lyrics")): return lyrics
-    if any(x in name for x in ("caption","prompt","description","desc","sample_query","query")): return caption
+    name = str(
+        p.get("parameter_name")
+        or p.get("name")
+        or p.get("label")
+        or p.get("component_label")
+        or ""
+    ).lower().strip()
+
+    default = p.get("default", None)
+    choices = _choice_values(p)
+
+    # Text inputs first.
+    if "lyrics" in name or name == "lyric":
+        return lyrics
+    if any(x in name for x in ("caption", "prompt", "description", "sample_query", "query")):
+        return caption
+
     if "duration" in name:
         return float(duration)
-    if "language" in name or "vocal_language" in name: return language
-    if "audio_format" in name or name=="format": return audio_format
-    if name in ("thinking","think"): return True
-    if "instrumental" in name: return False
-    if "inference_steps" in name or name=="steps": return 8
-    if "seed" in name: return -1
-    if "batch_size" in name: return 1
-    if "bpm" in name: return None
-    if "key_scale" in name or "keyscale" in name: return ""
-    if "time_signature" in name or "timesignature" in name: return ""
-    # ACE-Step exposes several different "model" dropdowns.
-    # The 5Hz LM model is NOT the DiT model; never send the DiT
-    # choice (acestep-v15-turbo) into an LM-model dropdown.
-    if ("lm" in name and "model" in name) or "5hz" in name:
-        if choices:
-            # Prefer the current/default LM choice when available.
-            if default in choices:
-                return default
-            return choices[0]
-        return default if default is not None else ""
+    if "vocal_language" in name or name == "language" or name.endswith("_language"):
+        return language
+    if "audio_format" in name:
+        return audio_format
+    if name in ("thinking", "think", "use_llm_thinking"):
+        return True
+    if "instrumental" in name:
+        return False
+    if "inference_steps" in name or name in ("steps", "num_inference_steps"):
+        return 8
+    if name in ("seed", "seeds"):
+        return -1
+    if "batch_size" in name:
+        return 1
+    if name in ("bpm",):
+        return None
+    if name in ("key_scale", "keyscale"):
+        return ""
+    if name in ("time_signature", "timesignature"):
+        return ""
+    if name in ("task_type", "task"):
+        return "text2music" if not choices or "text2music" in choices else choices[0]
 
-    # Main ACE-Step DiT model / config path.
-    if ("config" in name and "path" in name) or "main model" in name or name in ("model", "model_path"):
-        preferred="acestep-v15-turbo"
+    # IMPORTANT: do not assume every parameter containing "model" is the main
+    # DiT model. The Space has multiple model-related controls.
+    if "model" in name:
+        preferred = "acestep-v15-turbo"
         if preferred in choices:
             return preferred
+        if "xl" in name:
+            for c in choices:
+                if "xl" in str(c).lower() and "turbo" in str(c).lower():
+                    return c
         if choices:
             return choices[0]
-        return preferred
+        if default is not None:
+            return default
 
-    # Other model selectors (for example checkpoint selectors) must use
-    # one of their own advertised choices, never the DiT model name.
-    if "model" in name:
-        if choices:
-            if default in choices:
-                return default
-            return choices[0]
-        return default if default is not None else ""
-    if "task_type" in name: return "text2music"
-    if "use_format" in name or "format" in name and "audio" not in name: return True
-    if "lm_temperature" in name: return 0.85
-    if "lm_cfg_scale" in name: return 2.0
-    if "lm_top_k" in name: return 0
-    if "lm_top_p" in name: return 0.9
-    if "lm_repetition_penalty" in name: return 1.0
-    if "lm_negative_prompt" in name: return "NO USER INPUT"
-    if "use_cot" in name or "constrained_decoding" in name: return True
-    if "guidance_scale" in name: return 7.0
-    if "shift" in name: return 3.0
-    if "infer_method" in name: return "ode"
-    if "random_seed" in name: return True
-    if "timesteps" in name: return ""
-    if "audio_cover_strength" in name: return 1.0
-    if "repainting_start" in name: return 0.0
-    if "repainting_end" in name: return -1.0
-    if "track_name" in name: return None
-    if "complete_track" in name: return []
-    if default is not None:
-        # Never send an invalid value to a Gradio choice component.
-        if choices and default not in choices:
-            return choices[0]
-        return default
-    # If this is a choice component whose schema did not match a named field,
-    # use its first valid choice rather than sending an empty string.
+    if "use_format" in name:
+        return True
+    if name == "format":
+        return audio_format if "audio" in name else (choices[0] if choices else True)
+    if "lm_temperature" in name:
+        return 0.85
+    if "lm_cfg_scale" in name:
+        return 2.0
+    if "lm_top_k" in name:
+        return 0
+    if "lm_top_p" in name:
+        return 0.9
+    if "lm_repetition_penalty" in name:
+        return 1.0
+    if "lm_negative_prompt" in name:
+        return ""
+    if "use_cot" in name or "constrained_decoding" in name or "use_constrained_decoding" in name:
+        return True
+    if name == "guidance_scale":
+        return 7.0
+    if name == "shift":
+        return 3.0
+    if name == "infer_method":
+        return "ode"
+    if name in ("random_seed", "use_random_seed"):
+        return True
+    if name == "timesteps":
+        return ""
+    if "audio_cover_strength" in name:
+        return 1.0
+    if "repainting_start" in name:
+        return 0.0
+    if "repainting_end" in name:
+        return -1.0
+    if "track_name" in name:
+        return None
+    if "complete_track" in name:
+        return []
+
+    # For any dropdown/radio we don't explicitly understand, NEVER send an
+    # empty string if the API provides legal choices.
     if choices:
+        if default in choices:
+            return default
         return choices[0]
-    # conservative fallbacks
-    typ=p.get("type",{})
-    if isinstance(typ,dict):
-        t=str(typ.get("type","")).lower()
-        if "bool" in t: return False
-        if "number" in t or "integer" in t: return 0
+
+    if default is not None:
+        return default
+
+    typ = p.get("type", {})
+    if isinstance(typ, dict):
+        t = str(typ.get("type", "")).lower()
+        if "bool" in t:
+            return False
+        if "number" in t or "integer" in t:
+            return 0
+
+    # Last-resort value for optional text fields.
     return ""
 
 def call_generation(client, lyrics, caption, language, duration):
-    info=safe_view_api(client)
-    endpoint,spec=choose_endpoint(info)
-    params=spec_params(spec)
+    info = safe_view_api(client)
+    endpoint, spec = choose_endpoint(info)
+    params = spec_params(spec)
 
-    values=[make_value(p,lyrics,caption,language,duration,"mp3") for p in params]
-    try:
-        result=client.predict(*values,api_name=endpoint)
-    except Exception as first:
-        # Try keyword arguments if the API exposes parameter names.
-        kwargs={}
-        for p,v in zip(params,values):
-            name=p.get("parameter_name") or p.get("name")
-            if name: kwargs[name]=v
-        if not kwargs:
-            raise first
-        result=client.predict(api_name=endpoint,**kwargs)
-    return result
+    if not params:
+        raise RuntimeError(f"Generation endpoint {endpoint!r} exposes no input parameters.")
 
-def extract_file(result):
-    if isinstance(result,dict):
-        for k in ("path","url","name","audio","audio_url","value"):
-            v=result.get(k)
-            if isinstance(v,str) and (v.startswith("http") or os.path.exists(v) or "." in os.path.basename(v)):
-                return v
+    values = [make_value(p, lyrics, caption, language, duration, "mp3") for p in params]
+
+    # Use positional arguments because this is the most compatible path across
+    # Gradio Client versions.
+    result = client.predict(*values, api_name=endpoint)
+    return result, endpoint, spec
+
+def extract_audio(result):
+    """Recursively find an actual audio file/URL, ignoring Gradio UI updates."""
+    audio_exts = (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".webm")
+
+    if isinstance(result, dict):
+        # FileData / audio component dictionaries.
+        for key in ("path", "url", "audio_url", "name"):
+            v = result.get(key)
+            if isinstance(v, str):
+                if v.startswith("http") or os.path.exists(v) or v.lower().split("?")[0].endswith(audio_exts):
+                    return v
         for v in result.values():
-            x=extract_file(v)
-            if x:return x
-    if isinstance(result,(list,tuple)):
+            found = extract_audio(v)
+            if found:
+                return found
+
+    elif isinstance(result, (list, tuple)):
         for v in result:
-            x=extract_file(v)
-            if x:return x
-    if isinstance(result,str):
-        return result
+            found = extract_audio(v)
+            if found:
+                return found
+
+    elif isinstance(result, str):
+        clean = result.split("?")[0].lower()
+        if result.startswith("http") or os.path.exists(result) or clean.endswith(audio_exts):
+            return result
+
     return None
 
 with st.sidebar:
@@ -295,10 +413,12 @@ if generate:
         client=get_client()
         status.info("🎼 Sending your lyrics to ACE-Step 1.5...")
         with st.spinner("🎵 Generating your song... this can take time on a free GPU queue."):
-            result=call_generation(client,lyrics,caption,LANG[language],duration)
+            result, endpoint_used, endpoint_spec = call_generation(
+                client, lyrics, caption, LANG[language], duration
+            )
         status.success("🎉 Generation finished!")
 
-        audio_path=extract_file(result)
+        audio_path=extract_audio(result)
         if audio_path and os.path.exists(audio_path):
             data=Path(audio_path).read_bytes()
         elif audio_path and audio_path.startswith("http"):

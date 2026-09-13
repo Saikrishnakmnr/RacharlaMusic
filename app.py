@@ -37,22 +37,25 @@ if POSTER.exists():
 
 st.markdown(
     '<div class="glass"><div class="title">🎵 RacharlaMusic</div>'
-    '<div style="color: #bdbcdc;">Free AI Audio & Vocal Song Generator</div></div><br>',
+    '<div style="color: #bdbcdc;">ACE API Full Vocal Song Generator</div></div><br>',
     unsafe_allow_html=True,
 )
 
 STYLES = {
-    "Melody": "beautiful Indian melody with warm piano, expressive vocals and guitar",
-    "Telugu Romantic": "romantic Telugu film song, intimate vocal performance, acoustic guitar, soft strings",
-    "Telugu Mass": "high energy Telugu commercial track, fast vocal delivery, heavy folk drums, power beat",
-    "Telugu Folk": "traditional Telugu folk style, authentic vocals, organic rhythm, dholak",
-    "English Pop": "modern English pop track, smooth lead singing style, catchy synth beat",
-    "Cinematic": "epic cinematic soundtrack, dramatic orchestration with vocal chants",
+    "Telugu Melodic": "Melodic Telugu film song, emotional lead vocal, acoustic guitar",
+    "Telugu Mass": "High energy Telugu commercial track, fast vocal delivery, energetic beats",
+    "Telugu Folk": "Traditional Telugu folk style, authentic vocals, rhythmic dholak",
+    "English Pop": "Modern English pop track, catchy vocal hooks, smooth beat",
+    "Cinematic": "Grand epic soundtrack with vocal chants and dramatic build",
 }
 
-# Sidebar Controls
+# Sidebar Settings
 with st.sidebar:
-    st.markdown("## 🎵 Generation Settings")
+    st.markdown("## 🔑 ACE API Settings")
+    ace_api_key = st.text_input("ACE API Key", type="password", value=os.environ.get("ACE_API_KEY", ""))
+    
+    st.markdown("---")
+    st.markdown("## 🎵 Audio Settings")
     style_choice = st.selectbox("🎼 Song Style", list(STYLES), index=0)
     duration = st.selectbox("⏱️ Target Duration", [30, 60], index=0)
 
@@ -61,112 +64,87 @@ c1, c2 = st.columns([1.3, 0.7], gap="large")
 
 with c1:
     st.markdown('<div class="glass">', unsafe_allow_html=True)
-    st.markdown("### ✍️ Song Script & Lyrics")
+    st.markdown("### ✍️ Lyrics & Concept Script")
     lyrics_input = st.text_area("Write your lyrics or idea", height=200, placeholder="[Verse]\nనీ కోసం నా గుండెలో...\n\n[Chorus]\nMy heart beats for you...")
     track_title = st.text_input("🎧 Song Title", value="My Racharla Track")
     
-    st.markdown(f'<div class="tip">Configured to generate <b>{duration}-second</b> audio track.</div>', unsafe_allow_html=True)
-    generate_btn = st.button("✨ GENERATE SONG & SCRIPT 🎵", use_container_width=True)
+    st.markdown(f'<div class="tip">Generation target set to <b>{duration} seconds</b>.</div>', unsafe_allow_html=True)
+    generate_btn = st.button("✨ GENERATE FULL SONG 🎵", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with c2:
     st.markdown('<div class="glass">', unsafe_allow_html=True)
     st.markdown("### 🎚️ Output Player & Script")
     
-    player_placeholder = st.empty()
-    script_placeholder = st.empty()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# Audio Generation Logic via Cloud Endpoints
-def fetch_cloud_audio(prompt_text, seconds):
-    url = "https://facebook-musicgen.hf.space/call/predict"
-    payload = {
-        "data": [
-            prompt_text,
-            "facebook/musicgen-small",
-            "Mel",
-            seconds
-        ]
-    }
-    
-    res = requests.post(url, json=payload, timeout=25)
-    if res.status_code == 200:
-        event_id = res.json().get("event_id")
-        if event_id:
-            status_url = f"https://facebook-musicgen.hf.space/call/predict/{event_id}"
-            for _ in range(30):
-                time.sleep(2)
-                poll = requests.get(status_url, timeout=25)
-                if "event: complete" in poll.text:
-                    for line in poll.text.split("\n"):
-                        if line.startswith("data:"):
-                            import json
-                            data = json.loads(line.replace("data: ", ""))
-                            file_info = data[0]
-                            file_url = file_info.get("url") if isinstance(file_info, dict) else None
-                            if file_url:
-                                audio_res = requests.get(file_url, timeout=30)
-                                if audio_res.status_code == 200:
-                                    return audio_res.content
-    return None
-
-# Process Action
-if generate_btn:
-    if not lyrics_input.strip():
-        st.warning("Please enter lyrics or a song concept first.")
-        st.stop()
-
-    prompt = f"{style_choice} style. {STYLES[style_choice]}. Lyrics idea: {lyrics_input[:200]}"
-    formatted_script = f"[Verse 1]\n{lyrics_input}\n\n[Chorus]\n{track_title} - Harmony\n\n[Outro]\nSoft melody fading out..."
-    
-    st.session_state["script"] = formatted_script
-    st.session_state["track_title"] = track_title.strip() or "Racharla Track"
-    
-    status = st.empty()
-    status.info(f"Generating {duration}-second audio track... Please wait (~35 seconds)...")
-    
-    audio_bytes = None
-    try:
-        audio_bytes = fetch_cloud_audio(prompt, duration)
-    except Exception:
-        audio_bytes = None
-
-    if audio_bytes and len(audio_bytes) > 2000:
-        st.session_state["audio_bytes"] = audio_bytes
-        status.success("Song generated successfully!")
-    else:
-        status.warning("Public server busy—retrying audio rendering...")
-        # Fallback query attempt
-        try:
-            fallback_res = requests.post(
-                "https://api-inference.huggingface.co/models/facebook/musicgen-small",
-                json={"inputs": prompt[:300]},
-                timeout=45
-            )
-            if fallback_res.status_code == 200 and len(fallback_res.content) > 2000:
-                st.session_state["audio_bytes"] = fallback_res.content
-                status.success("Song generated successfully via backup pipeline!")
-            else:
-                status.error("Cloud engine busy. Please click Generate once more to complete.")
-        except Exception:
-            status.error("Cloud engine busy. Please click Generate once more to complete.")
-            
-    st.rerun()
-
-# Render Session Output
-if "audio_bytes" in st.session_state:
-    with c2:
-        st.success(f"Generated Track: **{st.session_state.get('track_title', 'Untitled')}**")
-        st.audio(st.session_state["audio_bytes"], format="audio/wav")
+    if "audio_bytes" in st.session_state:
+        st.success(f"Track Generated: **{st.session_state.get('track_title', 'Untitled')}** ({duration}s)")
+        st.audio(st.session_state["audio_bytes"], format="audio/mp3")
         st.download_button(
-            label="⬇️ Download Track (WAV)",
+            label="⬇️ Download Track (MP3)",
             data=st.session_state["audio_bytes"],
-            file_name=f"{st.session_state.get('track_title', 'track')}.wav",
-            mime="audio/wav",
+            file_name=f"{st.session_state.get('track_title', 'track')}.mp3",
+            mime="audio/mp3",
             use_container_width=True
         )
+    else:
+        st.info("Your audio track will appear here after generation.")
 
-if "script" in st.session_state:
-    with c2:
+    if "script" in st.session_state:
+        st.markdown("---")
         st.markdown("**Generated Song Script:**")
         st.code(st.session_state["script"], language="text")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# API Call Function
+def generate_ace_song(api_key, prompt, lyrics, duration_secs):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "prompt": prompt,
+        "lyrics": lyrics,
+        "duration": duration_secs,
+        "audio_format": "mp3"
+    }
+    
+    # Send Request to ACE API endpoint
+    response = requests.post("https://api.acestep.io/v1/generate", json=payload, headers=headers, timeout=60)
+    if response.status_code == 200:
+        res_data = response.json()
+        audio_url = res_data.get("audio_url")
+        if audio_url:
+            audio_res = requests.get(audio_url, timeout=30)
+            if audio_res.status_code == 200:
+                return audio_res.content
+    return None
+
+# Process Generation
+if generate_btn:
+    if not ace_api_key.strip():
+        st.error("Please enter your ACE API Key in the sidebar.")
+        st.stop()
+        
+    if not lyrics_input.strip():
+        st.warning("Please enter lyrics or a song concept.")
+        st.stop()
+
+    status = st.empty()
+    status.info(f"Connecting to ACE API... Generating {duration}-second song with vocals (~25 seconds)...")
+
+    full_prompt = f"{style_choice} style. {STYLES[style_choice]}. Title: {track_title}"
+    formatted_script = f"[Verse 1]\n{lyrics_input}\n\n[Chorus]\n{track_title}\n\n[Outro]\nFade out..."
+
+    try:
+        audio_data = generate_ace_song(ace_api_key.strip(), full_prompt, lyrics_input, duration)
+        if audio_data and len(audio_data) > 2000:
+            st.session_state["audio_bytes"] = audio_data
+            st.session_state["script"] = formatted_script
+            st.session_state["track_title"] = track_title.strip() or "Racharla Track"
+            status.success("Song generated successfully!")
+            st.rerun()
+        else:
+            status.error("Failed to generate audio. Check your ACE API key or credit balance.")
+    except Exception as e:
+        status.error(f"Generation error: {e}")

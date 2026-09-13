@@ -322,6 +322,42 @@ def choose_value(p, *, lyrics, caption, language, duration, provider):
             return default
         return choices[0]
 
+    # Respect the actual Gradio component bounds before using a generic
+    # numeric fallback. This prevents errors such as:
+    # "Value 0.0 is less than minimum value 1."
+    if isinstance(p, dict):
+        minimum = p.get("minimum")
+        maximum = p.get("maximum")
+        step = p.get("step")
+
+        if minimum is not None:
+            try:
+                lo = float(minimum)
+                hi = float(maximum) if maximum is not None else None
+
+                # Prefer the declared default if it is inside the legal range.
+                if default is not None:
+                    try:
+                        dv = float(default)
+                        if dv >= lo and (hi is None or dv <= hi):
+                            return default
+                    except Exception:
+                        pass
+
+                # Safe legal value. Keep integer controls integer.
+                if "int" in text_of(p) or (
+                    step is not None and float(step).is_integer()
+                ):
+                    value = int(lo)
+                else:
+                    value = lo
+
+                if hi is not None:
+                    value = min(value, hi)
+                return value
+            except Exception:
+                pass
+
     if default is not None:
         return default
 
@@ -329,9 +365,9 @@ def choose_value(p, *, lyrics, caption, language, duration, provider):
     if "bool" in schema_text:
         return False
     if "float" in schema_text or "number" in schema_text:
-        return 0.0
+        return 1.0
     if "int" in schema_text:
-        return 0
+        return 1
     return ""
 
 def extract_audio(value):
@@ -511,14 +547,48 @@ def generate_minimax_verified(lyrics, caption, duration):
     client = get_client("Upsampler/minimax-music3")
     safe_duration = max(5, min(int(duration), 300))
 
-    result = client.predict(
-        caption,
-        safe_duration,
-        0,       # seed: minimum is 0
-        False,   # instrumental
-        lyrics,
-        api_name="generate_music",
-    )
+    try:
+        result = client.predict(
+            caption,
+            safe_duration,
+            0,       # seed: minimum is 0
+            False,   # instrumental
+            lyrics,
+            api_name="/generate_music",
+        )
+    except Exception as first_error:
+        # Gradio versions differ in whether view_api exposes a leading slash.
+        # Discover the live endpoint instead of guessing a second URL.
+        try:
+            info = get_api_info("Upsampler/minimax-music3")
+            candidates = []
+            for ep_name, ep_spec in all_endpoints(info):
+                blob = (str(ep_name) + " " + text_of(ep_spec)).lower()
+                params = params_of(ep_spec)
+                if (
+                    "generate_music" in str(ep_name).lower()
+                    or (
+                        "description" in blob
+                        and "lyrics" in blob
+                        and len(params) == 5
+                    )
+                ):
+                    candidates.append(ep_name)
+            if not candidates:
+                raise first_error
+            endpoint = candidates[0]
+            if not endpoint.startswith("/"):
+                endpoint = "/" + endpoint
+            result = client.predict(
+                caption,
+                safe_duration,
+                0,
+                False,
+                lyrics,
+                api_name=endpoint,
+            )
+        except Exception:
+            raise first_error
 
     audio = extract_audio(result)
     if not audio:
@@ -717,7 +787,16 @@ if generate:
                     except Exception as first_error:
                         # If the Gradio UI signature changes, use ACE-Step's
                         # documented HTTP async generation API.
-                        if "Value:" in str(first_error) or "not in the list of choices" in str(first_error):
+                        first_text = str(first_error)
+                        validation_markers = (
+                            "Value ",
+                            "less than minimum",
+                            "greater than maximum",
+                            "not in the list of choices",
+                            "not in the choices",
+                            "is not a valid",
+                        )
+                        if any(marker in first_text for marker in validation_markers):
                             audio = generate_ace_http(
                                 lyrics, caption, LANG[language], duration
                             )

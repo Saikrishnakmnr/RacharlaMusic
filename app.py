@@ -3,447 +3,531 @@ import io
 import os
 import re
 import time
-from pathlib import Path
-
+import requests
 import streamlit as st
 
 APP_NAME = "RacharlaMusic"
-SPACE_ID = "ACE-Step/Ace-Step-v1.5"
-ROOT = Path(__file__).parent
-POSTER = ROOT / "assets" / "racharlamusic_poster.png"
 
-st.set_page_config(page_title="RacharlaMusic", page_icon="🎵", layout="wide")
+st.set_page_config(
+    page_title=APP_NAME,
+    page_icon="🎵",
+    layout="wide",
+)
 
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
-.stApp{font-family:Poppins,sans-serif;color:#fff;background:
-radial-gradient(circle at 8% 4%,rgba(255,30,205,.22),transparent 27%),
-radial-gradient(circle at 94% 8%,rgba(0,220,255,.18),transparent 28%),
-radial-gradient(circle at 55% 90%,rgba(105,62,255,.22),transparent 34%),
-linear-gradient(135deg,#06051a,#10134a 50%,#061c39);}
-.block-container{max-width:1280px;padding-top:1rem}
-.hero{border-radius:28px;overflow:hidden;border:1px solid rgba(255,255,255,.16);
-box-shadow:0 25px 75px rgba(0,0,0,.48),0 0 45px rgba(255,35,205,.13);margin-bottom:22px}
-.hero img{display:block;width:100%}
-.glass{border:1px solid rgba(255,255,255,.14);border-radius:24px;padding:22px;
-background:linear-gradient(145deg,rgba(25,28,88,.86),rgba(6,20,57,.78));
-box-shadow:0 20px 55px rgba(0,0,0,.34),inset 0 1px rgba(255,255,255,.06)}
-.title{font-size:2.5rem;font-weight:800;background:linear-gradient(90deg,#fff,#ff4ed4,#7c62ff,#20e5ff);
--webkit-background-clip:text;color:transparent}
-.muted{color:#bdbcdc}
-.badge{display:inline-block;margin:4px;padding:6px 11px;border-radius:99px;background:rgba(255,255,255,.07);
-border:1px solid rgba(255,255,255,.1);font-size:.78rem}
-.tip{border-left:4px solid #ff35cf;border-radius:0 14px 14px 0;background:rgba(255,53,207,.07);padding:12px 15px}
-.stButton>button{border:0!important;border-radius:16px!important;color:#fff!important;font-weight:800!important;
-background:linear-gradient(90deg,#ff18c9,#824eff,#00cef4)!important;
-box-shadow:0 12px 35px rgba(255,24,201,.3)!important;min-height:52px!important}
-.stButton>button:hover{transform:translateY(-2px);box-shadow:0 18px 45px rgba(255,24,201,.42)!important}
-div[data-testid="stTextArea"] textarea{background:rgba(4,8,35,.88)!important;color:white!important;
-border-radius:18px!important;border:1px solid rgba(160,110,255,.45)!important}
-div[data-baseweb="select"]>div{background:rgba(6,11,44,.9)!important;border-radius:14px!important}
-.footer{text-align:center;color:#aaa9c9;padding:30px 0 8px}
-</style>
-""", unsafe_allow_html=True)
+# ---------------------------------------------------------------------
+# Optional provider tokens
+# ---------------------------------------------------------------------
+HF_TOKEN = st.secrets.get("HF_TOKEN", os.getenv("HF_TOKEN", ""))
+REPLICATE_TOKEN = st.secrets.get("REPLICATE_API_TOKEN", os.getenv("REPLICATE_API_TOKEN", ""))
 
-if POSTER.exists():
-    st.markdown('<div class="hero">', unsafe_allow_html=True)
-    st.image(str(POSTER), use_container_width=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+ACE_SPACE = "ACE-Step/Ace-Step-v1.5"
+MUSICGEN_SPACE = "Surn/UnlimitedMusicGen"
+STABLE_AUDIO_SPACE = "stabilityai/stable-audio-3"
 
-st.markdown('<div class="glass"><div class="title">🎵 RacharlaMusic</div>'
-            '<div class="muted">Your lyrics • AI melody • Natural singing • Your song</div>'
-            '<div><span class="badge">🇮🇳 Telugu</span><span class="badge">🇬🇧 English</span>'
-            '<span class="badge">🔀 Mixed</span><span class="badge">🎤 Vocals</span>'
-            '<span class="badge">⬇️ MP3</span></div></div><br>', unsafe_allow_html=True)
+LANGUAGES = {
+    "Telugu": "te",
+    "English": "en",
+    "Hindi": "hi",
+    "Tamil": "ta",
+    "Kannada": "kn",
+    "Malayalam": "ml",
+    "Bengali": "bn",
+    "Marathi": "mr",
+    "Punjabi": "pa",
+    "Urdu": "ur",
+}
 
 STYLES = {
-"Melody":"beautiful Indian melodic film song, memorable hook, warm piano, acoustic guitar, lush strings, soft percussion, expressive natural singing, polished studio mix",
-"Romantic":"romantic Indian film song, intimate natural vocals, piano, acoustic guitar, lush strings, emotional melody, polished studio production",
-"Folk":"Telugu folk-inspired song, organic percussion, acoustic instruments, catchy traditional melody, energetic natural singing",
-"Mass":"high-energy Telugu commercial song, powerful natural vocals, punchy drums, bass, rhythmic hooks, cinematic production",
-"Sad":"emotional Indian ballad, expressive natural vocals, piano, strings, restrained drums, haunting memorable melody",
-"Cinematic":"grand Indian cinematic soundtrack, expressive natural vocals, orchestral strings, piano, percussion, dramatic build",
-"Lo-fi":"dreamy lo-fi Indian pop, intimate natural vocals, soft drums, warm keys, mellow bass",
-"Devotional":"devotional Indian melody, respectful natural vocals, flute, gentle percussion, uplifting arrangement",
-"Hip-hop":"Indian melodic hip-hop, natural sung hook, rhythmic vocal delivery, deep bass, crisp drums, modern production",
-"Rock":"Indian pop rock, natural expressive vocals, electric guitars, live drums, bass, strong melodic chorus",
-"Pop":"modern Indian pop, natural lead vocals, catchy melody, polished drums, bass, bright synths"
+    "Melody": "beautiful Indian melodic film song, memorable hook, warm piano, acoustic guitar, lush strings, soft percussion, expressive natural singing, polished studio mix",
+    "Cinematic": "epic Indian cinematic film song, emotional orchestra, lush strings, piano, cinematic percussion, powerful chorus, expressive natural lead vocal",
+    "Romantic": "warm romantic Indian film melody, acoustic guitar, piano, soft strings, gentle percussion, intimate expressive natural singing",
+    "Devotional": "beautiful Indian devotional melody, warm harmonium and piano, flute, tanpura texture, soft tabla, lush strings, soulful natural lead vocal",
+    "Folk": "modern Indian folk film song, acoustic instruments, flute, dholak, hand percussion, catchy melodic hook, energetic natural singing",
+    "Motivational": "uplifting Indian cinematic anthem, warm piano, acoustic guitar, big strings, driving percussion, memorable powerful chorus, natural expressive singing",
 }
-LANG={"Telugu":"te","English":"en","Telugu + English":"te"}
 
-@st.cache_resource(show_spinner=False)
-def get_client():
-    try:
-        from gradio_client import Client
-        return Client(SPACE_ID)
-    except Exception as e:
-        raise RuntimeError(f"Could not connect to the free music service: {e}")
-
-def safe_view_api(client):
-    try:
-        info=client.view_api(return_format="dict")
-        return info
-    except TypeError:
-        return client.view_api()
-    except Exception as e:
-        raise RuntimeError(f"Could not read the music service API: {e}")
-
-
-def _textify(obj):
-    """Turn an API schema object into searchable text."""
-    try:
-        return str(obj).lower()
-    except Exception:
+def clean_lyrics(text: str) -> str:
+    text = (text or "").strip()
+    if not text:
         return ""
+    return text
 
-def _param_list(spec):
-    if not isinstance(spec, dict):
-        return []
-    for key in ("parameters", "inputs"):
-        val = spec.get(key)
-        if isinstance(val, list):
-            return val
-    return []
+def build_prompt(style_text: str, extra: str, language_name: str) -> str:
+    parts = [
+        style_text,
+        f"Indian {language_name} film song",
+        "natural human-like lead vocal, musical phrasing, emotional dynamics, no robotic delivery",
+    ]
+    if extra.strip():
+        parts.append(extra.strip())
+    return ", ".join(parts)
 
-def _return_list(spec):
-    if not isinstance(spec, dict):
-        return []
-    for key in ("returns", "outputs"):
-        val = spec.get(key)
-        if isinstance(val, list):
-            return val
-    return []
+def looks_like_quota_error(text: str) -> bool:
+    t = (text or "").lower()
+    return any(x in t for x in [
+        "zerogpu quota",
+        "exceeded your zerogpu quota",
+        "quota",
+        "gpu task aborted",
+        "out of gpu",
+        "no gpu",
+        "capacity",
+    ])
 
-def endpoint_candidates(info):
-    """Return only plausible *generation* endpoints.
-
-    The ACE-Step Space exposes many Gradio events (load/init/config changes).
-    Picking the first endpoint containing 'generate' is unsafe because those
-    events can return UI update dictionaries rather than audio.
-    """
-    eps = []
-    if not isinstance(info, dict):
-        return eps
-
-    for container_key in ("named_endpoints", "unnamed_endpoints"):
-        container = info.get(container_key, {})
-        if not isinstance(container, dict):
-            continue
-        for name, spec in container.items():
-            params = _param_list(spec)
-            returns = _return_list(spec)
-            ptxt = _textify(params)
-            rtxt = _textify(returns)
-            ntxt = _textify(name)
-            alltxt = f"{ntxt} {ptxt} {rtxt}"
-
-            # A real music generation event should accept lyrics/caption and
-            # normally duration/audio-related parameters.
-            has_text = ("lyrics" in ptxt or "lyric" in ptxt)
-            has_prompt = any(x in ptxt for x in ("caption", "prompt", "description", "sample_query"))
-            has_duration = "duration" in ptxt
-            has_audio_output = any(
-                x in rtxt for x in ("audio", "filepath", "filedata", "audio_url")
-            )
-            bad_event = any(
-                x in alltxt for x in (
-                    "initialize", "initialise", "load_model", "load model",
-                    "change_model", "change model", "checkpoint", "refresh"
-                )
-            )
-
-            score = 0
-            if has_text: score += 40
-            if has_prompt: score += 25
-            if has_duration: score += 15
-            if has_audio_output: score += 40
-            if "generate" in ntxt: score += 20
-            if "music" in ntxt: score += 10
-            if "audio" in ntxt: score += 5
-            if bad_event: score -= 60
-
-            if has_text or has_prompt or has_audio_output:
-                eps.append((score, name, spec))
-
-    eps.sort(key=lambda x: x[0], reverse=True)
-    return eps
-
-def choose_endpoint(info):
-    eps = endpoint_candidates(info)
-    if not eps:
-        raise RuntimeError(
-            "Could not find the ACE-Step music generation endpoint. "
-            "The Hugging Face Space API may have changed."
-        )
-
-    # Prefer an endpoint that both consumes lyrics/prompt and returns audio.
-    for score, name, spec in eps:
-        ptxt = _textify(_param_list(spec))
-        rtxt = _textify(_return_list(spec))
-        if ("lyric" in ptxt or "caption" in ptxt or "prompt" in ptxt) and \
-           any(x in rtxt for x in ("audio", "filepath", "filedata")):
-            return name, spec
-
-    return eps[0][1], eps[0][2]
-
-def spec_params(spec):
-    return _param_list(spec)
-
-def _choice_values(p):
-    choices = p.get("choices") or p.get("enum") or p.get("options")
-    if isinstance(choices, dict):
-        choices = list(choices.keys())
-    if isinstance(choices, (list, tuple)):
-        # Gradio sometimes returns [["value","label"], ...]
-        out = []
-        for c in choices:
-            if isinstance(c, (list, tuple)) and c:
-                out.append(c[0])
-            else:
-                out.append(c)
-        return out
-    return []
-
-def make_value(p, lyrics, caption, language, duration, audio_format):
-    name = str(
-        p.get("parameter_name")
-        or p.get("name")
-        or p.get("label")
-        or p.get("component_label")
-        or ""
-    ).lower().strip()
-
-    default = p.get("default", None)
-    choices = _choice_values(p)
-
-    # Text inputs first.
-    if "lyrics" in name or name == "lyric":
-        return lyrics
-    if any(x in name for x in ("caption", "prompt", "description", "sample_query", "query")):
-        return caption
-
-    if "duration" in name:
-        return float(duration)
-    if "vocal_language" in name or name == "language" or name.endswith("_language"):
-        return language
-    if "audio_format" in name:
-        return audio_format
-    if name in ("thinking", "think", "use_llm_thinking"):
-        return True
-    if "instrumental" in name:
-        return False
-    if "inference_steps" in name or name in ("steps", "num_inference_steps"):
-        return 8
-    if name in ("seed", "seeds"):
-        return -1
-    if "batch_size" in name:
-        return 1
-    if name in ("bpm",):
+def audio_bytes_from_value(value):
+    """Recursively find a downloadable audio URL/path/file-like value."""
+    if value is None:
         return None
-    if name in ("key_scale", "keyscale"):
-        return ""
-    if name in ("time_signature", "timesignature"):
-        return ""
-    if name in ("task_type", "task"):
-        return "text2music" if not choices or "text2music" in choices else choices[0]
 
-    # IMPORTANT: do not assume every parameter containing "model" is the main
-    # DiT model. The Space has multiple model-related controls.
-    if "model" in name:
-        preferred = "acestep-v15-turbo"
-        if preferred in choices:
-            return preferred
-        if "xl" in name:
-            for c in choices:
-                if "xl" in str(c).lower() and "turbo" in str(c).lower():
-                    return c
-        if choices:
-            return choices[0]
-        if default is not None:
-            return default
+    if isinstance(value, bytes):
+        return value
 
-    if "use_format" in name:
-        return True
-    if name == "format":
-        return audio_format if "audio" in name else (choices[0] if choices else True)
-    if "lm_temperature" in name:
-        return 0.85
-    if "lm_cfg_scale" in name:
-        return 2.0
-    if "lm_top_k" in name:
-        return 0
-    if "lm_top_p" in name:
-        return 0.9
-    if "lm_repetition_penalty" in name:
-        return 1.0
-    if "lm_negative_prompt" in name:
-        return ""
-    if "use_cot" in name or "constrained_decoding" in name or "use_constrained_decoding" in name:
-        return True
-    if name == "guidance_scale":
-        return 7.0
-    if name == "shift":
-        return 3.0
-    if name == "infer_method":
-        return "ode"
-    if name in ("random_seed", "use_random_seed"):
-        return True
-    if name == "timesteps":
-        return ""
-    if "audio_cover_strength" in name:
-        return 1.0
-    if "repainting_start" in name:
-        return 0.0
-    if "repainting_end" in name:
-        return -1.0
-    if "track_name" in name:
-        return None
-    if "complete_track" in name:
-        return []
+    if hasattr(value, "read"):
+        try:
+            return value.read()
+        except Exception:
+            pass
 
-    # For any dropdown/radio we don't explicitly understand, NEVER send an
-    # empty string if the API provides legal choices.
-    if choices:
-        if default in choices:
-            return default
-        return choices[0]
-
-    if default is not None:
-        return default
-
-    typ = p.get("type", {})
-    if isinstance(typ, dict):
-        t = str(typ.get("type", "")).lower()
-        if "bool" in t:
-            return False
-        if "number" in t or "integer" in t:
-            return 0
-
-    # Last-resort value for optional text fields.
-    return ""
-
-def call_generation(client, lyrics, caption, language, duration):
-    info = safe_view_api(client)
-    endpoint, spec = choose_endpoint(info)
-    params = spec_params(spec)
-
-    if not params:
-        raise RuntimeError(f"Generation endpoint {endpoint!r} exposes no input parameters.")
-
-    values = [make_value(p, lyrics, caption, language, duration, "mp3") for p in params]
-
-    # Use positional arguments because this is the most compatible path across
-    # Gradio Client versions.
-    result = client.predict(*values, api_name=endpoint)
-    return result, endpoint, spec
-
-def extract_audio(result):
-    """Recursively find an actual audio file/URL, ignoring Gradio UI updates."""
-    audio_exts = (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".webm")
-
-    if isinstance(result, dict):
-        # FileData / audio component dictionaries.
-        for key in ("path", "url", "audio_url", "name"):
-            v = result.get(key)
+    if isinstance(value, dict):
+        # Gradio FileData / API dictionaries
+        for k in ("url", "path", "file", "name"):
+            v = value.get(k)
             if isinstance(v, str):
-                if v.startswith("http") or os.path.exists(v) or v.lower().split("?")[0].endswith(audio_exts):
-                    return v
-        for v in result.values():
-            found = extract_audio(v)
-            if found:
-                return found
+                b = download_audio(v)
+                if b:
+                    return b
+        for v in value.values():
+            b = audio_bytes_from_value(v)
+            if b:
+                return b
+        return None
 
-    elif isinstance(result, (list, tuple)):
-        for v in result:
-            found = extract_audio(v)
-            if found:
-                return found
+    if isinstance(value, (list, tuple)):
+        for v in value:
+            b = audio_bytes_from_value(v)
+            if b:
+                return b
+        return None
 
-    elif isinstance(result, str):
-        clean = result.split("?")[0].lower()
-        if result.startswith("http") or os.path.exists(result) or clean.endswith(audio_exts):
-            return result
+    if isinstance(value, str):
+        return download_audio(value)
 
     return None
 
-with st.sidebar:
-    st.markdown("## 🎵 RacharlaMusic")
-    language=st.selectbox("🌐 Lyrics",list(LANG),index=0)
-    vocal=st.selectbox("🎤 Vocal",["Natural lead","Female","Male","Duet"])
-    style=st.selectbox("🎼 Style",list(STYLES),index=0)
-    duration_label=st.select_slider("⏱️ Length",["1 min","2 min","3 min","4 min","5 min","6 min"],value="4 min")
-    duration=int(duration_label.split()[0])*60
-    st.markdown("---")
-    st.info("No API key is required by this version. Generation uses the public ACE-Step Hugging Face Space. Free ZeroGPU availability can vary.")
+def download_audio(value):
+    if not value:
+        return None
 
-c1,c2=st.columns([1.35,.75],gap="large")
-with c1:
-    st.markdown('<div class="glass">',unsafe_allow_html=True)
-    st.markdown("### ✍️ Create your song")
-    lyrics=st.text_area("Lyrics",height=330,max_chars=8000,placeholder="[Verse 1]\nనీ కోసం నా గుండెలో...\n\n[Chorus]\nYou are my light...")
-    title=st.text_input("🎧 Song title",placeholder="My Racharla Song")
-    extra=st.text_input("🎹 Extra music direction",placeholder="flute intro, warm piano, big cinematic chorus")
-    st.markdown('<div class="tip">💡 Better structure: use [Verse], [Pre-Chorus], [Chorus], [Bridge], [Outro].</div>',unsafe_allow_html=True)
-    generate=st.button("✨  GENERATE MY SONG  🎵",use_container_width=True)
-    st.markdown("</div>",unsafe_allow_html=True)
+    s = str(value)
+    if s.startswith("/"):
+        # Local paths returned by a remote Space are not directly readable.
+        return None
 
-with c2:
-    st.markdown('<div class="glass">',unsafe_allow_html=True)
+    if s.startswith("http://") or s.startswith("https://"):
+        try:
+            r = requests.get(s, timeout=90)
+            r.raise_for_status()
+            ctype = (r.headers.get("content-type") or "").lower()
+            if "audio" in ctype or any(x in s.lower() for x in [".mp3", ".wav", ".flac", ".ogg", ".m4a"]):
+                return r.content
+        except Exception:
+            return None
+
+    return None
+
+def get_gradio_client(space):
+    from gradio_client import Client
+    kwargs = {}
+    if HF_TOKEN:
+        kwargs["hf_token"] = HF_TOKEN
+    return Client(space, **kwargs)
+
+def safe_view_api(client):
+    try:
+        return client.view_api(return_format="dict")
+    except Exception:
+        return client.view_api()
+
+def flatten_text(obj):
+    if isinstance(obj, str):
+        return obj.lower()
+    if isinstance(obj, dict):
+        return " ".join(flatten_text(v) for v in obj.values())
+    if isinstance(obj, (list, tuple)):
+        return " ".join(flatten_text(v) for v in obj)
+    return str(obj).lower()
+
+def endpoint_specs(api_info):
+    out = []
+    if isinstance(api_info, dict):
+        for key in ("named_endpoints", "unnamed_endpoints"):
+            val = api_info.get(key, {})
+            if isinstance(val, dict):
+                for name, spec in val.items():
+                    out.append((name, spec))
+            elif isinstance(val, list):
+                for spec in val:
+                    if isinstance(spec, dict):
+                        out.append((spec.get("api_name") or spec.get("name") or "/unnamed", spec))
+    return out
+
+def choose_generation_endpoint(api_info):
+    candidates = []
+    for name, spec in endpoint_specs(api_info):
+        params = spec.get("parameters") or spec.get("inputs") or []
+        returns = spec.get("returns") or spec.get("outputs") or []
+        ptxt = flatten_text(params)
+        rtxt = flatten_text(returns)
+        ntxt = flatten_text(name)
+
+        score = 0
+        if any(x in ptxt for x in ["lyrics", "caption", "prompt", "simple_query", "text"]):
+            score += 7
+        if any(x in ptxt for x in ["duration", "audio_duration"]):
+            score += 3
+        if any(x in rtxt for x in ["audio", "file", "filepath", "path"]):
+            score += 7
+        if any(x in ntxt for x in ["generate", "music", "predict"]):
+            score += 4
+        if any(x in ntxt for x in ["load", "init", "model", "refresh", "checkpoint"]):
+            score -= 10
+
+        if score > 0:
+            candidates.append((score, name, spec))
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0] if candidates else None
+
+def choices_for(param):
+    if not isinstance(param, dict):
+        return []
+    for key in ("choices", "enum", "values"):
+        v = param.get(key)
+        if isinstance(v, list):
+            return v
+    return []
+
+def param_name(param):
+    if isinstance(param, dict):
+        return str(param.get("parameter_name") or param.get("name") or param.get("label") or "")
+    return str(param)
+
+def make_gradio_value(param, prompt, lyrics, duration, language_code):
+    name = param_name(param).lower()
+    choices = choices_for(param)
+
+    def pick(*wanted):
+        for w in wanted:
+            for c in choices:
+                if str(c).lower() == str(w).lower():
+                    return c
+        return choices[0] if choices else None
+
+    if "lyrics" in name:
+        return lyrics
+    if any(x in name for x in ["caption", "prompt", "simple_query", "description", "text"]):
+        return prompt
+    if "duration" in name or "length" in name:
+        return duration
+    if "vocal_language" in name or name in ("language", "lang"):
+        return pick(language_code, "te" if language_code == "te" else None, "English", "en")
+    if "audio_format" in name or "format" == name:
+        return pick("mp3", "wav")
+    if "thinking" in name or "think" in name:
+        return False
+    if "instrumental" in name:
+        return False
+    if "batch" in name:
+        return 1
+    if "inference_steps" in name or "steps" in name:
+        return 8
+    if "seed" in name:
+        return -1
+    if "guidance" in name or "cfg" in name:
+        return 3.5
+    if "temperature" in name:
+        return 0.85
+    if "top_k" in name:
+        return 250
+    if "top_p" in name:
+        return 0.9
+    if "model" in name:
+        # Main DiT model vs 5Hz/LM selector.
+        if any(x in name for x in ["lm", "language", "5hz"]):
+            for c in choices:
+                if "5hz" in str(c).lower() or "lm" in str(c).lower():
+                    return c
+        for wanted in ("acestep-v15-turbo", "turbo", "medium", "small"):
+            for c in choices:
+                if wanted in str(c).lower():
+                    return c
+        return choices[0] if choices else None
+    if "generation_mode" in name or name == "mode":
+        return pick("custom", "simple")
+    if "task_type" in name:
+        return pick("text2music", "text-to-music")
+    if "bpm" in name:
+        return None
+    if "key" in name or "scale" in name:
+        return None
+    if "time_signature" in name or "timesignature" in name:
+        return None
+    if choices:
+        # Never send an invalid blank choice to a Gradio dropdown.
+        return choices[0]
+
+    # Reasonable primitive defaults based on schema hints.
+    t = flatten_text(param)
+    if "bool" in t:
+        return False
+    if "int" in t:
+        return 0
+    if "float" in t:
+        return 0.0
+    return None
+
+def call_dynamic_gradio(space, prompt, lyrics, duration, language_code):
+    client = get_gradio_client(space)
+    api = safe_view_api(client)
+    selected = choose_generation_endpoint(api)
+    if not selected:
+        raise RuntimeError(f"No generation endpoint found for {space}")
+
+    _, endpoint, spec = selected
+    params = spec.get("parameters") or spec.get("inputs") or []
+    values = [
+        make_gradio_value(p, prompt, lyrics, duration, language_code)
+        for p in params
+    ]
+
+    result = client.predict(*values, api_name=endpoint)
+    audio = audio_bytes_from_value(result)
+    if not audio:
+        raise RuntimeError(f"{space}: generation returned no downloadable audio")
+    return audio
+
+def call_musicgen(prompt, duration):
+    # This Space documents a direct Gradio REST API and internally segments
+    # longer MusicGen generations.
+    url = "https://huggingface.co/spaces/Surn/UnlimitedMusicGen/api/predict_simple"
+    payload = {
+        "model": "stereo-small",
+        "text": prompt,
+        "duration": min(int(duration), 60),
+        "temperature": 0.8,
+        "cfg_coef": 4.0,
+        "seed": -1,
+        "overlap": 2,
+        "video_orientation": "Landscape",
+    }
+    r = requests.post(url, json=payload, timeout=180)
+    if r.status_code >= 400:
+        raise RuntimeError(f"MusicGen HTTP {r.status_code}: {r.text[:500]}")
+
+    data = r.json()
+    if isinstance(data, (list, tuple)):
+        # documented response: video_url, audio_url, seed
+        for item in data:
+            b = audio_bytes_from_value(item)
+            if b:
+                return b
+    return audio_bytes_from_value(data)
+
+def call_replicate(prompt, duration):
+    if not REPLICATE_TOKEN:
+        raise RuntimeError("Replicate fallback is disabled because REPLICATE_API_TOKEN is not configured.")
+
+    # Replicate's MusicGen endpoint is a paid API in general, so it is kept
+    # as an optional fourth fallback rather than silently charging anyone.
+    url = "https://api.replicate.com/v1/predictions"
+    headers = {
+        "Authorization": f"Bearer {REPLICATE_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    version = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb"
+    payload = {
+        "version": version,
+        "input": {
+            "prompt": prompt,
+            "duration": min(int(duration), 30),
+            "output_format": "mp3",
+        },
+    }
+    r = requests.post(url, headers=headers, json=payload, timeout=60)
+    r.raise_for_status()
+    job = r.json()
+    poll_url = job.get("urls", {}).get("get")
+    if not poll_url:
+        raise RuntimeError("Replicate did not return a polling URL.")
+
+    for _ in range(90):
+        p = requests.get(poll_url, headers=headers, timeout=30)
+        p.raise_for_status()
+        data = p.json()
+        if data.get("status") == "succeeded":
+            return audio_bytes_from_value(data.get("output"))
+        if data.get("status") in ("failed", "canceled"):
+            raise RuntimeError(str(data.get("error") or data.get("status")))
+        time.sleep(2)
+
+    raise RuntimeError("Replicate generation timed out.")
+
+def try_provider(name, fn, status_box):
+    status_box.info(f"🎼 Trying {name}…")
+    try:
+        audio = fn()
+        if audio:
+            status_box.success(f"✅ Generated with {name}")
+            return audio, None
+        raise RuntimeError("No audio returned.")
+    except Exception as e:
+        msg = str(e)
+        if looks_like_quota_error(msg):
+            status_box.warning(f"⚠️ {name} is temporarily unavailable because its GPU quota/capacity is exhausted.")
+        else:
+            status_box.warning(f"⚠️ {name} failed: {msg[:300]}")
+        return None, msg
+
+# ---------------------------------------------------------------------
+# UI
+# ---------------------------------------------------------------------
+st.markdown("""
+<style>
+.main-title {
+    font-size: 3rem;
+    font-weight: 800;
+    margin-bottom: 0.1rem;
+}
+.sub {
+    opacity: .78;
+    margin-bottom: 1rem;
+}
+.card {
+    padding: 1rem 1.1rem;
+    border: 1px solid rgba(128,128,128,.25);
+    border-radius: 16px;
+    margin-bottom: 1rem;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="main-title">🎵 RacharlaMusic</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="sub">Telugu • English • Indian film songs • automatic multi-provider fallback</div>',
+    unsafe_allow_html=True,
+)
+
+left, right = st.columns([1.05, 1])
+
+with left:
+    language_name = st.selectbox("Language", list(LANGUAGES.keys()), index=0)
+    style_name = st.selectbox("Style", list(STYLES.keys()), index=0)
+    duration_min = st.slider("Length", 1, 6, 2, 1)
+    title = st.text_input("Song title", placeholder="e.g. Naa Pranam")
+    lyrics = st.text_area(
+        "Lyrics",
+        height=300,
+        placeholder="[Verse]\n...\n\n[Pre-Chorus]\n...\n\n[Chorus]\n...",
+    )
+
+with right:
+    extra = st.text_area(
+        "Music direction",
+        height=130,
+        value="flute intro, warm piano, big cinematic chorus",
+    )
+    st.markdown("**Suggested structure:** `[Verse] [Pre-Chorus] [Chorus] [Bridge] [Outro]`")
+
+    prompt = build_prompt(STYLES[style_name], extra, language_name)
+
     st.markdown("### 🎚️ Sound preview")
-    st.markdown(f"**Language:** {language}<br>**Vocal:** {vocal}<br>**Style:** {style}<br>**Length:** {duration_label}",unsafe_allow_html=True)
-    st.markdown(f'<p class="muted">{STYLES[style]}</p>',unsafe_allow_html=True)
-    st.markdown("</div>",unsafe_allow_html=True)
+    st.write(f"**Language:** {language_name}")
+    st.write("**Vocal:** Natural lead")
+    st.write(f"**Style:** {style_name}")
+    st.write(f"**Length:** {duration_min} min")
+    st.caption(prompt)
+
+generate = st.button("🎼 Generate song", type="primary", use_container_width=True)
 
 if generate:
-    if not lyrics.strip():
-        st.warning("Please paste your lyrics first.")
+    lyrics = clean_lyrics(lyrics)
+
+    if not lyrics:
+        st.error("Please enter lyrics first.")
         st.stop()
 
-    vocal_text={
-        "Natural lead":"natural human-like lead singing, expressive phrasing, clear diction",
-        "Female":"natural human-like female lead singing, expressive phrasing, clear diction",
-        "Male":"natural human-like male lead singing, expressive phrasing, clear diction",
-        "Duet":"natural human-like male and female duet singing, expressive harmonies"
-    }[vocal]
-    caption=f"{STYLES[style]}, {vocal_text}, {extra}, professional studio mix, strong melodic chorus, no spoken narration"
-    status=st.empty()
-    try:
-        status.info("🔌 Connecting to the free AI music Space...")
-        client=get_client()
-        status.info("🎼 Sending your lyrics to ACE-Step 1.5...")
-        with st.spinner("🎵 Generating your song... this can take time on a free GPU queue."):
-            result, endpoint_used, endpoint_spec = call_generation(
-                client, lyrics, caption, LANG[language], duration
+    if len(lyrics) < 20:
+        st.warning("The lyrics are very short. A fuller verse + chorus usually gives a better song.")
+
+    duration_sec = duration_min * 60
+    status = st.empty()
+
+    # IMPORTANT:
+    # We deliberately try several independent providers. ACE-Step is first
+    # because it supports lyrics + vocals. If its shared ZeroGPU quota is gone,
+    # the request moves on instead of showing a false 'generation finished'.
+    providers = [
+        (
+            "ACE-Step 1.5",
+            lambda: call_dynamic_gradio(
+                ACE_SPACE, prompt, lyrics, duration_sec, LANGUAGES[language_name]
+            ),
+        ),
+        (
+            "Stable Audio 3",
+            lambda: call_dynamic_gradio(
+                STABLE_AUDIO_SPACE, prompt, "", min(duration_sec, 60), "en"
+            ),
+        ),
+        (
+            "MusicGen fallback",
+            lambda: call_musicgen(prompt, duration_sec),
+        ),
+    ]
+
+    if REPLICATE_TOKEN:
+        providers.append(
+            (
+                "Replicate MusicGen fallback",
+                lambda: call_replicate(prompt, duration_sec),
             )
-        status.success("🎉 Generation finished!")
+        )
 
-        audio_path=extract_audio(result)
-        if audio_path and os.path.exists(audio_path):
-            data=Path(audio_path).read_bytes()
-        elif audio_path and audio_path.startswith("http"):
-            import requests
-            rr=requests.get(audio_path,timeout=180)
-            rr.raise_for_status()
-            data=rr.content
-        else:
-            st.write(result)
-            st.error("The music service returned a result, but no downloadable audio file could be identified.")
-            st.stop()
+    final_audio = None
+    errors = []
 
-        st.session_state["audio"]=data
-        st.session_state["title"]=title.strip() or "RacharlaMusic Song"
-    except Exception as e:
-        st.error("❌ The free music service could not generate the song.")
-        st.code(str(e))
-        st.info("This is usually a temporary Hugging Face/ZeroGPU queue or API availability problem—not a problem with your lyrics.")
+    for provider_name, provider_fn in providers:
+        audio, err = try_provider(provider_name, provider_fn, status)
+        if audio:
+            final_audio = audio
+            break
+        errors.append((provider_name, err))
 
-if "audio" in st.session_state:
-    st.markdown('<div class="glass">',unsafe_allow_html=True)
-    st.markdown("## 🎉 Your song is ready")
-    st.audio(st.session_state["audio"],format="audio/mpeg")
-    fname=re.sub(r"[^A-Za-z0-9_-]+","_",st.session_state["title"]).strip("_") or "RacharlaMusic_Song"
-    st.download_button("⬇️ DOWNLOAD MP3",st.session_state["audio"],file_name=f"{fname}.mp3",mime="audio/mpeg",use_container_width=True)
-    st.markdown("</div>",unsafe_allow_html=True)
+    if final_audio:
+        st.balloons()
+        st.success(f"🎉 Song generated successfully — provider: {provider_name}")
+        st.audio(final_audio, format="audio/mpeg")
+        filename = re.sub(r"[^A-Za-z0-9_-]+", "_", title.strip() or "racharlamusic_song")
+        st.download_button(
+            "⬇️ Download song",
+            data=final_audio,
+            file_name=f"{filename}.mp3",
+            mime="audio/mpeg",
+            use_container_width=True,
+        )
+    else:
+        st.error("❌ All available music providers are currently unavailable.")
+        with st.expander("Technical details"):
+            for name, err in errors:
+                st.write(f"**{name}:** {err}")
+        st.info(
+            "The app is now configured to fail over automatically. "
+            "If every public free provider is out of GPU capacity, there is no "
+            "reliable way for a Streamlit CPU server to synthesize a full song by itself."
+        )
 
-st.markdown('<div class="footer">🎵 <b>RacharlaMusic</b> • Create • Sing • Share • Anytime<br>Powered by <b>RacharlaGPT.in</b></div>',unsafe_allow_html=True)
+st.divider()
+st.caption(
+    "RacharlaMusic uses public AI generation services. Free GPU providers can have "
+    "shared capacity limits; the app automatically tries the next provider when one fails."
+)

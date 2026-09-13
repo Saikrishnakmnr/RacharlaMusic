@@ -15,9 +15,7 @@ POSTER = ROOT / "assets" / "racharlamusic_poster.png"
 # quota/capacity/API failures.
 PROVIDERS = [
     ("ACE-Step 1.5", "ACE-Step/Ace-Step-v1.5"),
-    ("MiniMax Music 3", "MiniMaxAI/MiniMax-Music3"),
-    ("YuE2-3B", "mrfakename/yue2-3b"),
-    ("MusicGen", "facebook/MusicGen"),
+    ("MiniMax Music 3", "Upsampler/minimax-music3"),
 ]
 
 HF_TOKEN = st.secrets.get("HF_TOKEN", os.getenv("HF_TOKEN", ""))
@@ -235,6 +233,13 @@ def choose_value(p, *, lyrics, caption, language, duration, provider):
         return choices[0] if choices else None
 
     # ACE-Step.
+    if "generation_mode" in name or name in ("mode", "generationmode"):
+        for wanted in ("custom", "simple", "text2music"):
+            for c in choices:
+                if str(c).lower() == wanted.lower():
+                    return c
+        return choices[0] if choices else "custom"
+
     if "lyrics" in name or name in ("lrc", "lyric"):
         return lyrics
     if any(x in name for x in ("caption", "sample_query", "description", "desc", "query")):
@@ -256,7 +261,7 @@ def choose_value(p, *, lyrics, caption, language, duration, provider):
     if "inference_steps" in name or name == "steps":
         return 8
     if "seed" in name:
-        return -1
+        return 0
     if "batch_size" in name:
         return 1
     if name == "bpm" or name.endswith("_bpm"):
@@ -397,6 +402,129 @@ def download_url(url, mime=""):
     except Exception:
         return None
     return None
+
+
+def generate_ace_http(lyrics, caption, language, duration):
+    """Official ACE-Step async HTTP API fallback."""
+    bases = ["https://ace-step-ace-step-v1-5.hf.space"]
+    headers = {"Content-Type": "application/json"}
+    if HF_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+
+    payload = {
+        "caption": caption[:512],
+        "lyrics": lyrics[:4096],
+        "thinking": False,
+        "vocal_language": language,
+        "audio_format": "mp3",
+        "audio_duration": max(10, min(float(duration), 600)),
+        "model": "acestep-v15-turbo",
+        "inference_steps": 8,
+        "use_format": False,
+        "task_type": "text2music",
+    }
+
+    last_error = None
+    for base in bases:
+        try:
+            r = requests.post(
+                base + "/v1/music/generate",
+                json=payload,
+                headers=headers,
+                timeout=45,
+            )
+            if r.status_code in (404, 405):
+                last_error = f"HTTP {r.status_code}"
+                continue
+            r.raise_for_status()
+            data = r.json()
+
+            job_id = data.get("job_id")
+            if not job_id:
+                audio = extract_audio(data)
+                if audio:
+                    return audio
+                raise RuntimeError(str(data)[:1000])
+
+            for _ in range(180):
+                q = requests.get(
+                    base + f"/v1/jobs/{job_id}",
+                    headers=headers,
+                    timeout=30,
+                )
+                q.raise_for_status()
+                status_data = q.json()
+                status = str(status_data.get("status", "")).lower()
+
+                if status == "succeeded":
+                    result = status_data.get("result", status_data)
+                    audio = extract_audio(result)
+                    if audio:
+                        return audio
+
+                    paths = []
+                    def collect(x):
+                        if isinstance(x, dict):
+                            for k, v in x.items():
+                                if k in ("path", "audio_path", "url") and isinstance(v, str):
+                                    paths.append(v)
+                                else:
+                                    collect(v)
+                        elif isinstance(x, (list, tuple)):
+                            for v in x:
+                                collect(v)
+
+                    collect(result)
+                    for p in paths:
+                        if p.startswith("http"):
+                            audio = download_url(p, "audio/mpeg")
+                            if audio:
+                                return audio
+                        else:
+                            u = base + "/v1/audio?path=" + requests.utils.quote(p, safe="")
+                            audio = download_url(u, "audio/mpeg")
+                            if audio:
+                                return audio
+
+                    raise RuntimeError("ACE-Step returned no downloadable audio.")
+
+                if status in ("failed", "error", "cancelled", "canceled"):
+                    raise RuntimeError(
+                        str(status_data.get("error") or status_data)[:1200]
+                    )
+
+                time.sleep(2)
+
+            raise RuntimeError("ACE-Step job timed out.")
+
+        except Exception as exc:
+            last_error = str(exc)
+
+    raise RuntimeError(f"ACE-Step HTTP API unavailable: {last_error}")
+
+
+def generate_minimax_verified(lyrics, caption, duration):
+    """
+    Verified plain endpoint from Upsampler/minimax-music3:
+    generate_music(description, duration, seed, instrumental, lyrics)
+    """
+    client = get_client("Upsampler/minimax-music3")
+    safe_duration = max(5, min(int(duration), 300))
+
+    result = client.predict(
+        caption,
+        safe_duration,
+        0,       # seed: minimum is 0
+        False,   # instrumental
+        lyrics,
+        api_name="generate_music",
+    )
+
+    audio = extract_audio(result)
+    if not audio:
+        raise RuntimeError("MiniMax Music 3 returned no downloadable audio.")
+    return audio
+
 
 def generate_with_gradio(space_id, provider, lyrics, caption, language, duration):
     client = get_client(space_id)
@@ -576,14 +704,38 @@ if generate:
                 f"Generating with {provider_name}. "
                 "Public GPU services can take a little time..."
             ):
-                audio = generate_with_gradio(
-                    space_id,
-                    provider_name,
-                    lyrics,
-                    caption,
-                    LANG[language],
-                    duration,
-                )
+                if provider_name == "ACE-Step 1.5":
+                    try:
+                        audio = generate_with_gradio(
+                            space_id,
+                            provider_name,
+                            lyrics,
+                            caption,
+                            LANG[language],
+                            duration,
+                        )
+                    except Exception as first_error:
+                        # If the Gradio UI signature changes, use ACE-Step's
+                        # documented HTTP async generation API.
+                        if "Value:" in str(first_error) or "not in the list of choices" in str(first_error):
+                            audio = generate_ace_http(
+                                lyrics, caption, LANG[language], duration
+                            )
+                        else:
+                            raise
+                elif provider_name == "MiniMax Music 3":
+                    audio = generate_minimax_verified(
+                        lyrics, caption, duration
+                    )
+                else:
+                    audio = generate_with_gradio(
+                        space_id,
+                        provider_name,
+                        lyrics,
+                        caption,
+                        LANG[language],
+                        duration,
+                    )
 
             if audio:
                 final_audio = audio

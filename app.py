@@ -1,4 +1,5 @@
 import os
+import requests
 from pathlib import Path
 import streamlit as st
 from gradio_client import Client
@@ -35,15 +36,15 @@ if POSTER.exists():
 
 st.markdown(
     '<div class="glass"><div class="title">🎵 RacharlaMusic</div>'
-    '<div style="color: #bdbcdc;">Free AI Audio Generator (30–60 Second Preview Mode)</div></div><br>',
+    '<div style="color: #bdbcdc;">Free AI Audio Generator</div></div><br>',
     unsafe_allow_html=True,
 )
 
 STYLES = {
-    "Melody": "beautiful Indian melody, warm piano, acoustic guitar, expressive singing style",
-    "Romantic": "romantic Telugu film song, intimate vocals, acoustic guitar, soft strings",
-    "Folk": "Telugu folk style, traditional drums, energetic rhythm, catchy melody",
-    "Mass": "high energy commercial song, heavy bass, punchy drums, power beat",
+    "Melody": "beautiful Indian melody, warm piano, acoustic guitar, expressive music",
+    "Romantic": "romantic Telugu film song, intimate acoustic guitar, soft strings",
+    "Folk": "Telugu folk style, traditional drums, energetic rhythm",
+    "Mass": "high energy commercial soundtrack, heavy bass, punchy drums",
     "Cinematic": "grand orchestral score, epic strings, dramatic build",
 }
 
@@ -51,7 +52,6 @@ STYLES = {
 with st.sidebar:
     st.markdown("## 🎵 Audio Settings")
     style = st.selectbox("🎼 Music Style", list(STYLES), index=0)
-    duration = st.selectbox("⏱️ Target Duration", [30, 60], index=0)
 
 # Main Form
 c1, c2 = st.columns([1.35, 0.75], gap="large")
@@ -62,7 +62,7 @@ with c1:
     lyrics = st.text_area("Lyrics / Song Concept", height=180, placeholder="[Verse]\nWrite your lyrics or music idea here...")
     title = st.text_input("🎧 Track Title", placeholder="Racharla Track")
     
-    st.markdown(f'<div class="tip">Configured for standard <b>{duration}-second</b> cloud audio generation.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tip">Generating audio clip via keyless serverless API.</div>', unsafe_allow_html=True)
     generate = st.button("✨ GENERATE SONG 🎵", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -72,21 +72,29 @@ with c2:
     
     if "audio_bytes" in st.session_state:
         st.success(f"Generated Track: **{st.session_state.get('track_title', 'Untitled')}**")
-        st.audio(st.session_state["audio_bytes"], format="audio/wav")
+        st.audio(st.session_state["audio_bytes"], format="audio/flac")
         st.download_button(
             label="⬇️ Download Audio Track",
             data=st.session_state["audio_bytes"],
-            file_name=f"{st.session_state.get('track_title', 'track')}.wav",
-            mime="audio/wav",
+            file_name=f"{st.session_state.get('track_title', 'track')}.flac",
+            mime="audio/flac",
             use_container_width=True
         )
     else:
         st.info("Your audio will appear here when generation completes.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Verification helper
-def is_valid_audio_file(filepath: str) -> bool:
-    return bool(filepath and os.path.exists(filepath) and os.path.getsize(filepath) > 1000)
+# Helper function for Serverless API call
+def fetch_serverless_audio(prompt_text):
+    url = "https://api-inference.huggingface.co/models/facebook/musicgen-small"
+    payload = {"inputs": prompt_text[:300]}
+    
+    # 60s timeout to allow cold starts
+    response = requests.post(url, json=payload, timeout=60)
+    
+    if response.status_code == 200 and len(response.content) > 2000:
+        return response.content
+    return None
 
 # Process Generation
 if generate:
@@ -94,46 +102,37 @@ if generate:
         st.warning("Please enter your lyrics or concept prompt.")
         st.stop()
         
-    prompt = f"{style} style. {STYLES[style]}. Lyrics: {lyrics[:250]}"
+    prompt = f"{style} style. {STYLES[style]}. Concept: {lyrics[:200]}"
     
     status = st.empty()
-    status.info("Connecting to free music generator... Please wait 30-60 seconds.")
+    status.info("Generating music track via serverless backend... Please wait (30–60 secs)...")
     
-    audio_path = None
+    audio_bytes = None
     
-    # Primary API connection
+    # Provider 1: Direct Serverless Inference Call (No Token, Standard Endpoint)
     try:
-        client = Client("facebook/MusicGen")
-        result = client.predict(
-            text=prompt,
-            model_name="facebook/musicgen-small",
-            decoder="Mel",
-            duration=duration,
-            api_name="/predict"
-        )
-        if isinstance(result, (list, tuple)):
-            audio_path = result[1] if len(result) > 1 else result[0]
-        else:
-            audio_path = result
-    except Exception as e:
-        status.warning("Primary provider busy, trying fallback space...")
+        audio_bytes = fetch_serverless_audio(prompt)
+    except Exception:
+        audio_bytes = None
+        
+    # Provider 2: Alternative Public Gradio Client
+    if not audio_bytes:
         try:
-            client = Client("ACE-Step/ACE-Step")
-            result = client.predict(
-                prompt,
-                lyrics,
-                duration,
-                api_name="/text2music"
-            )
-            audio_path = result
-        except Exception as e2:
-            status.error(f"Generation failed across available endpoints: {e2}")
+            status.info("Primary serverless route busy. Trying secondary backup space...")
+            client = Client("facebook/MusicGen")
+            # Try positional parameters instead of rigid api_name schema
+            result = client.predict(prompt, "facebook/musicgen-small", "Mel", 30)
+            audio_path = result[1] if isinstance(result, (list, tuple)) else result
+            if audio_path and os.path.exists(str(audio_path)):
+                audio_bytes = Path(audio_path).read_bytes()
+        except Exception:
+            audio_bytes = None
 
-    # Process Audio Result and Verify Output
-    if is_valid_audio_file(str(audio_path)):
-        st.session_state["audio_bytes"] = Path(audio_path).read_bytes()
+    # Render Result
+    if audio_bytes and len(audio_bytes) > 2000:
+        st.session_state["audio_bytes"] = audio_bytes
         st.session_state["track_title"] = title.strip() or "Racharla Song"
         status.success("Generation completed successfully!")
         st.rerun()
     else:
-        status.error("Failed to generate audio file. Please click Generate again.")
+        status.error("The free public servers are currently overloaded. Please wait 15 seconds and click Generate again.")

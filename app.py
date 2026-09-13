@@ -101,12 +101,12 @@ with c2:
 def remove_emojis(text):
     emoji_pattern = re.compile(
         "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport & map symbols
-        "\U0001F1E0-\U0001F1FF"  # flags
-        "\U0002702-\U00027B0"
-        "\U00024C2-\U00025B6"
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\u2702-\u27B0"
+        "\u24C2-\u25B6"
         "]+",
         flags=re.UNICODE
     )

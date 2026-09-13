@@ -1,4 +1,5 @@
 import os
+import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -82,7 +83,7 @@ with c2:
         st.download_button(
             label="⬇️ Download Track (MP3)",
             data=st.session_state["audio_bytes"],
-            file_name=f"{st.session_state.get('track_title', 'track')}.mp3",
+            file_name=f"{st.session_state.get('clean_title', 'track')}.mp3",
             mime="audio/mp3",
             use_container_width=True
         )
@@ -95,6 +96,21 @@ with c2:
         st.code(st.session_state["script"], language="text")
         
     st.markdown("</div>", unsafe_allow_html=True)
+
+# Helper function to remove Emojis for safe HTTP requests
+def remove_emojis(text):
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags
+        "\U0002702-\U00027B0"
+        "\U00024C2-\U00025B6"
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub(r"", text)
 
 # Core Execution Logic
 if generate_btn:
@@ -122,7 +138,7 @@ if generate_btn:
         Format with [Intro], [Verse], [Chorus], and [Outro].
         """
         
-        # Try latest standard Flash model endpoints
+        # Call model fallback hierarchy
         try:
             script_res = client.models.generate_content(
                 model="gemini-2.5-flash",
@@ -136,21 +152,25 @@ if generate_btn:
             
         formatted_script = script_res.text if script_res and script_res.text else lyrics_input
 
-        # 2. Fetch Audio stream via native HTTP request (No extra package installation required)
-        lang_code = 'te' if any('\u0c00' <= char <= '\u0c7f' for char in lyrics_input) else 'en'
-        vocal_text = lyrics_input[:160] if duration == 30 else lyrics_input[:320]
+        # 2. Clean text for URL encoding (remove emojis, preserve Telugu/English)
+        clean_vocal = remove_emojis(lyrics_input)
+        lang_code = 'te' if any('\u0c00' <= char <= '\u0c7f' for char in clean_vocal) else 'en'
+        vocal_text = clean_vocal[:160] if duration == 30 else clean_vocal[:320]
         
-        encoded_text = urllib.parse.quote(vocal_text)
+        encoded_text = urllib.parse.quote(vocal_text.strip(), encoding='utf-8')
         tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl={lang_code}&client=tw-ob"
         
+        # 3. Fetch Audio Bytes safely
         req = urllib.request.Request(tts_url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
             audio_bytes = response.read()
 
-        # 3. Store Data in Session State
+        # 4. Store Data safely in Session State
+        clean_file_title = re.sub(r'[^\w\s-]', '', track_title).strip().replace(' ', '_') or "track"
         st.session_state["audio_bytes"] = audio_bytes
         st.session_state["script"] = formatted_script
         st.session_state["track_title"] = track_title.strip() or "Racharla Track"
+        st.session_state["clean_title"] = clean_file_title
         
         status.success("Song script & audio generated successfully!")
         st.rerun()

@@ -1,10 +1,8 @@
 import os
-import re
-import urllib.parse
-import urllib.request
+import time
+import requests
 from pathlib import Path
 import streamlit as st
-from google import genai
 
 APP_NAME = "RacharlaMusic"
 ROOT = Path(__file__).parent
@@ -16,7 +14,7 @@ st.set_page_config(
     layout="wide",
 )
 
-# Visual Styling & UI Theme
+# Visual Styling & Branding
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
@@ -31,7 +29,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Restore UI Poster Banner
+# Brand Banner Restoration
 if POSTER.exists():
     st.markdown('<div class="hero">', unsafe_allow_html=True)
     st.image(str(POSTER), use_container_width=True)
@@ -39,38 +37,39 @@ if POSTER.exists():
 
 st.markdown(
     '<div class="glass"><div class="title">🎵 RacharlaMusic</div>'
-    '<div style="color: #bdbcdc;">Gemini AI Vocal Song & Script Generator</div></div><br>',
+    '<div style="color: #bdbcdc;">ACE API Full Vocal Song Generator</div></div><br>',
     unsafe_allow_html=True,
 )
 
 STYLES = {
-    "Telugu Romantic": "Melodic Telugu song, emotional vocal, acoustic guitar melody",
-    "Telugu Mass": "High energy Telugu commercial track, fast vocal rhythm, energetic folk drums",
-    "Telugu Folk": "Traditional Telugu folk rhythm, authentic vocal style, dholak",
-    "English Pop": "Modern English pop track, upbeat vocal performance, catchy beat",
+    "Telugu Melodic": "Melodic Telugu film song, emotional lead vocal, acoustic guitar",
+    "Telugu Mass": "High energy Telugu commercial track, fast vocal delivery, energetic beats",
+    "Telugu Folk": "Traditional Telugu folk style, authentic vocals, rhythmic dholak",
+    "English Pop": "Modern English pop track, catchy vocal hooks, smooth beat",
+    "Cinematic": "Grand epic soundtrack with vocal chants and dramatic build",
 }
 
-# Sidebar Configuration
+# Sidebar Settings
 with st.sidebar:
-    st.markdown("## 🔑 API Configuration")
-    api_key = st.text_input("Gemini API Key", type="password", value=os.environ.get("GEMINI_API_KEY", ""))
+    st.markdown("## 🔑 ACE API Settings")
+    ace_api_key = st.text_input("ACE API Key", type="password", value=os.environ.get("ACE_API_KEY", ""))
     
     st.markdown("---")
     st.markdown("## 🎵 Audio Settings")
     style_choice = st.selectbox("🎼 Song Style", list(STYLES), index=0)
     duration = st.selectbox("⏱️ Target Duration", [30, 60], index=0)
 
-# Main Form Layout
+# Main Form
 c1, c2 = st.columns([1.3, 0.7], gap="large")
 
 with c1:
     st.markdown('<div class="glass">', unsafe_allow_html=True)
-    st.markdown("### ✍️ Song Concept & Lyrics")
+    st.markdown("### ✍️ Lyrics & Concept Script")
     lyrics_input = st.text_area("Write your lyrics or idea", height=200, placeholder="[Verse]\nనీ కోసం నా గుండెలో...\n\n[Chorus]\nMy heart beats for you...")
-    track_title = st.text_input("🎧 Track Title", value="My Racharla Song")
+    track_title = st.text_input("🎧 Song Title", value="My Racharla Track")
     
-    st.markdown(f'<div class="tip">Target audio length configured to <b>{duration} seconds</b>.</div>', unsafe_allow_html=True)
-    generate_btn = st.button("✨ GENERATE SONG & SCRIPT 🎵", use_container_width=True)
+    st.markdown(f'<div class="tip">Generation target set to <b>{duration} seconds</b>.</div>', unsafe_allow_html=True)
+    generate_btn = st.button("✨ GENERATE FULL SONG 🎵", use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 with c2:
@@ -78,102 +77,74 @@ with c2:
     st.markdown("### 🎚️ Output Player & Script")
     
     if "audio_bytes" in st.session_state:
-        st.success(f"Track Ready: **{st.session_state.get('track_title', 'Untitled')}** ({duration}s)")
+        st.success(f"Track Generated: **{st.session_state.get('track_title', 'Untitled')}** ({duration}s)")
         st.audio(st.session_state["audio_bytes"], format="audio/mp3")
         st.download_button(
             label="⬇️ Download Track (MP3)",
             data=st.session_state["audio_bytes"],
-            file_name=f"{st.session_state.get('clean_title', 'track')}.mp3",
+            file_name=f"{st.session_state.get('track_title', 'track')}.mp3",
             mime="audio/mp3",
             use_container_width=True
         )
     else:
-        st.info("Your generated audio track will appear here.")
-        
+        st.info("Your audio track will appear here after generation.")
+
     if "script" in st.session_state:
         st.markdown("---")
         st.markdown("**Generated Song Script:**")
         st.code(st.session_state["script"], language="text")
-        
+
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Helper function to remove Emojis for safe HTTP requests
-def remove_emojis(text):
-    emoji_pattern = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"
-        "\U0001F300-\U0001F5FF"
-        "\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\u2702-\u27B0"
-        "\u24C2-\u25B6"
-        "]+",
-        flags=re.UNICODE
-    )
-    return emoji_pattern.sub(r"", text)
+# API Call Function
+def generate_ace_song(api_key, prompt, lyrics, duration_secs):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "prompt": prompt,
+        "lyrics": lyrics,
+        "duration": duration_secs,
+        "audio_format": "mp3"
+    }
+    
+    # Send Request to ACE API endpoint
+    response = requests.post("https://api.acestep.io/v1/generate", json=payload, headers=headers, timeout=60)
+    if response.status_code == 200:
+        res_data = response.json()
+        audio_url = res_data.get("audio_url")
+        if audio_url:
+            audio_res = requests.get(audio_url, timeout=30)
+            if audio_res.status_code == 200:
+                return audio_res.content
+    return None
 
-# Core Execution Logic
+# Process Generation
 if generate_btn:
-    if not api_key.strip():
-        st.error("Please enter your Gemini API Key in the sidebar.")
+    if not ace_api_key.strip():
+        st.error("Please enter your ACE API Key in the sidebar.")
         st.stop()
         
     if not lyrics_input.strip():
-        st.warning("Please enter your song concept or lyrics.")
+        st.warning("Please enter lyrics or a song concept.")
         st.stop()
 
     status = st.empty()
-    status.info(f"Generating script & {duration}-second audio track via Gemini API...")
+    status.info(f"Connecting to ACE API... Generating {duration}-second song with vocals (~25 seconds)...")
+
+    full_prompt = f"{style_choice} style. {STYLES[style_choice]}. Title: {track_title}"
+    formatted_script = f"[Verse 1]\n{lyrics_input}\n\n[Chorus]\n{track_title}\n\n[Outro]\nFade out..."
 
     try:
-        # 1. Connect Gemini Client
-        client = genai.Client(api_key=api_key.strip())
-        prompt_content = f"""
-        Act as a music producer. Generate a song script based on:
-        Title: {track_title}
-        Style: {style_choice} ({STYLES[style_choice]})
-        Length Target: {duration} seconds
-        Lyrics/Idea: {lyrics_input}
-
-        Format with [Intro], [Verse], [Chorus], and [Outro].
-        """
-        
-        # Call model fallback hierarchy
-        try:
-            script_res = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt_content
-            )
-        except Exception:
-            script_res = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=prompt_content
-            )
-            
-        formatted_script = script_res.text if script_res and script_res.text else lyrics_input
-
-        # 2. Clean text for URL encoding (remove emojis, preserve Telugu/English)
-        clean_vocal = remove_emojis(lyrics_input)
-        lang_code = 'te' if any('\u0c00' <= char <= '\u0c7f' for char in clean_vocal) else 'en'
-        vocal_text = clean_vocal[:160] if duration == 30 else clean_vocal[:320]
-        
-        encoded_text = urllib.parse.quote(vocal_text.strip(), encoding='utf-8')
-        tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl={lang_code}&client=tw-ob"
-        
-        # 3. Fetch Audio Bytes safely
-        req = urllib.request.Request(tts_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            audio_bytes = response.read()
-
-        # 4. Store Data safely in Session State
-        clean_file_title = re.sub(r'[^\w\s-]', '', track_title).strip().replace(' ', '_') or "track"
-        st.session_state["audio_bytes"] = audio_bytes
-        st.session_state["script"] = formatted_script
-        st.session_state["track_title"] = track_title.strip() or "Racharla Track"
-        st.session_state["clean_title"] = clean_file_title
-        
-        status.success("Song script & audio generated successfully!")
-        st.rerun()
-
+        audio_data = generate_ace_song(ace_api_key.strip(), full_prompt, lyrics_input, duration)
+        if audio_data and len(audio_data) > 2000:
+            st.session_state["audio_bytes"] = audio_data
+            st.session_state["script"] = formatted_script
+            st.session_state["track_title"] = track_title.strip() or "Racharla Track"
+            status.success("Song generated successfully!")
+            st.rerun()
+        else:
+            status.error("Failed to generate audio. Check your ACE API key or credit balance.")
     except Exception as e:
         status.error(f"Generation error: {e}")

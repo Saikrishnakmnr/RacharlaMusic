@@ -9,12 +9,17 @@ class LocalFallbackProvider(BaseMusicProvider):
         sample_rate = 22050
         num_samples = int(sample_rate * duration_sec)
         
-        # Use lyrics content and seed to create unique melody patterns per song
+        # 1. Unique seed & variation based on lyrics content so every song is different
         lyrics_hash = sum(ord(c) for c in lyrics) if lyrics else 0
         combined_seed = seed + lyrics_hash
         random.seed(combined_seed)
         
-        scale = [0, 2, 3, 5, 7, 8, 10]
+        # Scale presets based on style prompt
+        if "Sad" in style_prompt or "Melodic" in style_prompt:
+            scale = [0, 2, 3, 5, 7, 8, 10] # Minor/Emotional
+        else:
+            scale = [0, 2, 4, 5, 7, 9, 11] # Major/Upbeat
+            
         buffer = io.BytesIO()
         import wave
         
@@ -24,32 +29,45 @@ class LocalFallbackProvider(BaseMusicProvider):
             wav_file.setframerate(sample_rate)
             
             frames = bytearray()
+            variation = (combined_seed % 7) * 4.0
+            
             for i in range(num_samples):
                 t = i / sample_rate
-                beat = t * 2.0
+                
+                # Song Structure Progression (Intro -> Verse -> Chorus -> Outro)
+                progress = t / duration_sec
+                section_factor = 0.5 + 0.5 * math.sin(progress * math.pi * 4)
+                
+                beat = t * 2.2
                 sub_beat = beat % 1.0
                 
-                variation = (combined_seed % 7) * 5.0
-                
+                # Kick Drum (Punchier in chorus sections)
                 kick = 0.0
-                if sub_beat < 0.15:
-                    kick_env = math.exp(-sub_beat * 15.0)
-                    kick = math.sin(2 * math.pi * (110 + variation - sub_beat * 400) * t) * kick_env * 0.5
+                if sub_beat < 0.2:
+                    kick_env = math.exp(-sub_beat * 12.0)
+                    kick = math.sin(2 * math.pi * (100 + variation - sub_beat * 300) * t) * kick_env * (0.4 + 0.2 * section_factor)
                 
+                # Hi-Hat
                 hihat_sub = (t * 8.0) % 1.0
-                hihat = (random.random() * 2 - 1) * math.exp(-hihat_sub * 30.0) * 0.1 if (int(t * 8.0) % 2 == 0) else 0.0
+                hihat = (random.random() * 2 - 1) * math.exp(-hihat_sub * 25.0) * 0.08 if (int(t * 8.0) % 2 == 0) else 0.0
                 
-                chord_idx = int(t / 2.0) % 4
-                base_notes = [98.0 + variation, 130.81, 146.83, 123.47]
+                # Bassline
+                chord_idx = int(t / 3.0) % 4
+                base_notes = [87.31 + variation, 116.54, 130.81, 98.00]
                 bass_freq = base_notes[chord_idx % len(base_notes)]
-                bass = math.sin(2 * math.pi * bass_freq * t) * 0.3 * (1.0 - (t % 0.5))
+                bass = math.sin(2 * math.pi * bass_freq * t) * 0.25 * (0.8 + 0.2 * math.sin(t * math.pi))
                 
-                melody_note_idx = int(t * 4.0 + combined_seed) % len(scale)
+                # Lead Melody (Changes per lyric text)
+                melody_note_idx = int(t * 3.0 + combined_seed) % len(scale)
                 note_freq = bass_freq * (2.0 ** (scale[melody_note_idx] / 12.0))
-                lead = math.sin(2 * math.pi * note_freq * t) * 0.2 * math.sin(math.pi * (t * 4.0 % 1.0))
+                lead = math.sin(2 * math.pi * note_freq * t) * 0.18 * math.sin(math.pi * (t * 3.0 % 1.0))
                 
-                mixed = max(-1.0, min(1.0, kick + hihat + bass + lead))
+                # Vocal-like formant simulation layer (adds singing resonance frequencies)
+                vocal_formant = math.sin(2 * math.pi * (note_freq * 2.0) * t + math.sin(t * 2.0)) * 0.08 * section_factor
+                
+                mixed = max(-1.0, min(1.0, kick + hihat + bass + lead + vocal_formant))
                 frames.extend(struct.pack('<h', int(mixed * 32767)))
                 
             wav_file.writeframes(frames)
+            
         return buffer.getvalue(), "RacharlaMusic Dynamic Synthesizer"

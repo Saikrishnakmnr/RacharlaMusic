@@ -149,13 +149,34 @@ def make_value(p, lyrics, caption, language, duration, audio_format):
     if "bpm" in name: return None
     if "key_scale" in name or "keyscale" in name: return ""
     if "time_signature" in name or "timesignature" in name: return ""
-    if "model" in name and "path" not in name:
+    # ACE-Step exposes several different "model" dropdowns.
+    # The 5Hz LM model is NOT the DiT model; never send the DiT
+    # choice (acestep-v15-turbo) into an LM-model dropdown.
+    if ("lm" in name and "model" in name) or "5hz" in name:
+        if choices:
+            # Prefer the current/default LM choice when available.
+            if default in choices:
+                return default
+            return choices[0]
+        return default if default is not None else ""
+
+    # Main ACE-Step DiT model / config path.
+    if ("config" in name and "path" in name) or "main model" in name or name in ("model", "model_path"):
         preferred="acestep-v15-turbo"
         if preferred in choices:
             return preferred
         if choices:
             return choices[0]
         return preferred
+
+    # Other model selectors (for example checkpoint selectors) must use
+    # one of their own advertised choices, never the DiT model name.
+    if "model" in name:
+        if choices:
+            if default in choices:
+                return default
+            return choices[0]
+        return default if default is not None else ""
     if "task_type" in name: return "text2music"
     if "use_format" in name or "format" in name and "audio" not in name: return True
     if "lm_temperature" in name: return 0.85
